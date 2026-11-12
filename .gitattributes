@@ -1,0 +1,4 @@
+* text=auto eol=lf
+admin/includes/config-zl.php -text
+*.xlsx binary
+*.png binary
