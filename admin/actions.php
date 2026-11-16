@@ -70,11 +70,22 @@ switch ($action) {
         if ($id) { // Modification
             if (!empty($_POST['mot_de_passe'])) {
                 $mdp = password_hash($_POST['mot_de_passe'], PASSWORD_BCRYPT);
-                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant=?, role=?, id_lycee=?, mot_de_passe=? WHERE id_utilisateur=?");
-                $stmt->execute([$identifiant, $role, $id_lycee, $mdp, $id]);
+                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant = :identifiant, role = :role, id_lycee = :id_lycee, mot_de_passe = :mot_de_passe WHERE id_utilisateur = :id_utilisateur");
+                $stmt->execute([
+                    ':identifiant'    => $identifiant,
+                    ':role'           => $role,
+                    ':id_lycee'       => $id_lycee,
+                    ':mot_de_passe'   => $mdp,
+                    ':id_utilisateur' => $id
+                ]);
             } else {
-                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant=?, role=?, id_lycee=? WHERE id_utilisateur=?");
-                $stmt->execute([$identifiant, $role, $id_lycee, $id]);
+                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant = :identifiant, role = :role, id_lycee = :id_lycee WHERE id_utilisateur = :id_utilisateur");
+                $stmt->execute([
+                    ':identifiant'    => $identifiant,
+                    ':role'           => $role,
+                    ':id_lycee'       => $id_lycee,
+                    ':id_utilisateur' => $id
+                ]);
             }
             $msg = "Utilisateur mis à jour avec succès.";
         } else { // Création
@@ -86,8 +97,13 @@ switch ($action) {
                 $msg = "Utilisateur créé avec succès. Mot de passe généré : \"$mdp_clair\" (notez-le, il ne sera plus affiché).";
             }
             $mdp = password_hash($mdp_clair, PASSWORD_BCRYPT);
-            $stmt = $pdo->prepare("INSERT INTO utilisateurs (identifiant, mot_de_passe, role, id_lycee) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$identifiant, $mdp, $role, $id_lycee]);
+            $stmt = $pdo->prepare("INSERT INTO utilisateurs (identifiant, mot_de_passe, role, id_lycee) VALUES (:identifiant, :mot_de_passe, :role, :id_lycee)");
+            $stmt->execute([
+                ':identifiant'  => $identifiant,
+                ':mot_de_passe' => $mdp,
+                ':role'         => $role,
+                ':id_lycee'     => $id_lycee
+            ]);
         }
         break;
 
@@ -101,8 +117,8 @@ switch ($action) {
             $status = 'error';
             $msg = "Vous ne pouvez pas supprimer votre propre compte.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM utilisateurs WHERE id_utilisateur = ?");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("DELETE FROM utilisateurs WHERE id_utilisateur = :id_utilisateur");
+            $stmt->execute([':id_utilisateur' => $id]);
             $msg = "Utilisateur supprimé.";
         }
         $redirect = './?section=utilisateurs';
@@ -118,12 +134,19 @@ switch ($action) {
         $redirect = './?section=lycees';
 
         if ($id) {
-            $stmt = $pdo->prepare("UPDATE lycees SET nom_lycee=?, ville=? WHERE id_lycee=?");
-            $stmt->execute([$nom_lycee, $ville, $id]);
+            $stmt = $pdo->prepare("UPDATE lycees SET nom_lycee = :nom_lycee, ville = :ville WHERE id_lycee = :id_lycee");
+            $stmt->execute([
+                ':nom_lycee' => $nom_lycee,
+                ':ville'     => $ville,
+                ':id_lycee'  => $id
+            ]);
             $msg = "Établissement mis à jour.";
         } else {
-            $stmt = $pdo->prepare("INSERT INTO lycees (nom_lycee, ville) VALUES (?, ?)");
-            $stmt->execute([$nom_lycee, $ville]);
+            $stmt = $pdo->prepare("INSERT INTO lycees (nom_lycee, ville) VALUES (:nom_lycee, :ville)");
+            $stmt->execute([
+                ':nom_lycee' => $nom_lycee,
+                ':ville'     => $ville
+            ]);
             $msg = "Établissement ajouté.";
         }
         break;
@@ -131,16 +154,16 @@ switch ($action) {
     case 'delete_lycee':
         $id = intval($_POST['id'] ?? 0);
 
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM equipes WHERE id_lycee = ?");
-        $stmt_check->execute([$id]);
+        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM equipes WHERE id_lycee = :id_lycee");
+        $stmt_check->execute([':id_lycee' => $id]);
         $nb_equipes = $stmt_check->fetchColumn();
 
         if ($nb_equipes > 0) {
             $status = 'error';
             $msg = "Impossible de supprimer ce lycée : il est rattaché à $nb_equipes équipe(s). Veuillez d'abord supprimer ou déplacer ces équipes.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM lycees WHERE id_lycee = ?");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("DELETE FROM lycees WHERE id_lycee = :id_lycee");
+            $stmt->execute([':id_lycee' => $id]);
             $status = 'success';
             $msg = "Lycée supprimé.";
         }
@@ -166,11 +189,22 @@ switch ($action) {
         if ($id) {
             if (!empty($_POST['mot_de_passe'])) {
                 $mdp = password_hash($_POST['mot_de_passe'], PASSWORD_BCRYPT);
-                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe=?, login_equipe=?, mot_de_passe=?, id_lycee=? WHERE id_equipe=?");
-                $stmt->execute([$nom_equipe, $login, $mdp, $id_lycee, $id]);
+                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe = :nom_equipe, login_equipe = :login_equipe, mot_de_passe = :mot_de_passe, id_lycee = :id_lycee WHERE id_equipe = :id_equipe");
+                $stmt->execute([
+                    ':nom_equipe'   => $nom_equipe,
+                    ':login_equipe' => $login,
+                    ':mot_de_passe' => $mdp,
+                    ':id_lycee'     => $id_lycee,
+                    ':id_equipe'    => $id
+                ]);
             } else {
-                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe=?, login_equipe=?, id_lycee=? WHERE id_equipe=?");
-                $stmt->execute([$nom_equipe, $login, $id_lycee, $id]);
+                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe = :nom_equipe, login_equipe = :login_equipe, id_lycee = :id_lycee WHERE id_equipe = :id_equipe");
+                $stmt->execute([
+                    ':nom_equipe'   => $nom_equipe,
+                    ':login_equipe' => $login,
+                    ':id_lycee'     => $id_lycee,
+                    ':id_equipe'    => $id
+                ]);
             }
             $msg = "Équipe modifiée avec succès.";
         } else {
@@ -184,22 +218,27 @@ switch ($action) {
                 $msg = "Équipe ajoutée avec succès. Mot de passe généré : \"$mdp_clair\" (notez-le, il ne sera plus affiché).";
             }
             $mdp = password_hash($mdp_clair, PASSWORD_BCRYPT);
-            $stmt = $pdo->prepare("INSERT INTO equipes (nom_equipe, login_equipe, mot_de_passe, id_lycee) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$nom_equipe, $login, $mdp, $id_lycee]);
+            $stmt = $pdo->prepare("INSERT INTO equipes (nom_equipe, login_equipe, mot_de_passe, id_lycee) VALUES (:nom_equipe, :login_equipe, :mot_de_passe, :id_lycee)");
+            $stmt->execute([
+                ':nom_equipe'   => $nom_equipe,
+                ':login_equipe' => $login,
+                ':mot_de_passe' => $mdp,
+                ':id_lycee'     => $id_lycee
+            ]);
         }
         break;
 
     case 'delete_equipe':
         $id = intval($_POST['id'] ?? 0);
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_equipe = ?");
-        $stmt_check->execute([$id]);
+        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_equipe = :id_equipe");
+        $stmt_check->execute([':id_equipe' => $id]);
 
         if ($stmt_check->fetchColumn() > 0) {
             $status = 'error';
             $msg = "Impossible de supprimer cette équipe : elle possède des feuilles de route actives.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM equipes WHERE id_equipe = ?");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("DELETE FROM equipes WHERE id_equipe = :id_equipe");
+            $stmt->execute([':id_equipe' => $id]);
             $msg = "Équipe supprimée.";
         }
         $redirect = './?section=equipes';
@@ -234,11 +273,14 @@ switch ($action) {
         $redirect = './?section=ot-zl';
 
         if ($id) {
-            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = ? AND id_ot != ?");
-            $stmt_check->execute([$num_ot, $id]);
+            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = :numero_ot AND id_ot != :id_ot");
+            $stmt_check->execute([
+                ':numero_ot' => $num_ot,
+                ':id_ot'     => $id
+            ]);
         } else {
-            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = ?");
-            $stmt_check->execute([$num_ot]);
+            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = :numero_ot");
+            $stmt_check->execute([':numero_ot' => $num_ot]);
         }
 
         if ($stmt_check->fetchColumn() > 0) {
@@ -246,12 +288,43 @@ switch ($action) {
             $msg = "Erreur : Un ordre de transport avec le numéro '$num_ot' existe déjà. Veuillez utiliser un numéro unique.";
         } else {
             if ($id) {
-                $stmt = $pdo->prepare("UPDATE zl_ordres_transport SET numero_ot=?, expediteur=?, rue_adresse_expediteur=?, cp_adresse_expediteur=?, ville_adresse_expediteur=?, destinataire=?, rue_adresse_destinataire=?, cp_adresse_destinataire=?, ville_adresse_destinataire=?, nb_supports=?, id_type_support=?, pbt=?, ca=?, id_equipe=? WHERE id_ot=?");
-                $stmt->execute([$num_ot, $expediteur, $rue_exp, $cp_exp, $ville_exp, $destinataire, $rue_dest, $cp_dest, $ville_dest, $nb_supports, $type_supports, $pbt, $ca, $id_equipe, $id]);
+                $stmt = $pdo->prepare("UPDATE zl_ordres_transport SET numero_ot = :numero_ot, expediteur = :expediteur, rue_adresse_expediteur = :rue_adresse_expediteur, cp_adresse_expediteur = :cp_adresse_expediteur, ville_adresse_expediteur = :ville_adresse_expediteur, destinataire = :destinataire, rue_adresse_destinataire = :rue_adresse_destinataire, cp_adresse_destinataire = :cp_adresse_destinataire, ville_adresse_destinataire = :ville_adresse_destinataire, nb_supports = :nb_supports, id_type_support = :id_type_support, pbt = :pbt, ca = :ca, id_equipe = :id_equipe WHERE id_ot = :id_ot");
+                $stmt->execute([
+                    ':numero_ot'                => $num_ot,
+                    ':expediteur'               => $expediteur,
+                    ':rue_adresse_expediteur'   => $rue_exp,
+                    ':cp_adresse_expediteur'    => $cp_exp,
+                    ':ville_adresse_expediteur' => $ville_exp,
+                    ':destinataire'             => $destinataire,
+                    ':rue_adresse_destinataire' => $rue_dest,
+                    ':cp_adresse_destinataire'  => $cp_dest,
+                    ':ville_adresse_destinataire'=> $ville_dest,
+                    ':nb_supports'              => $nb_supports,
+                    ':id_type_support'          => $type_supports,
+                    ':pbt'                      => $pbt,
+                    ':ca'                       => $ca,
+                    ':id_equipe'                => $id_equipe,
+                    ':id_ot'                    => $id
+                ]);
                 $msg = "Ordre de Transport mis à jour avec succès.";
             } else {
-                $stmt = $pdo->prepare("INSERT INTO zl_ordres_transport (numero_ot, expediteur, rue_adresse_expediteur, cp_adresse_expediteur, ville_adresse_expediteur, destinataire, rue_adresse_destinataire, cp_adresse_destinataire, ville_adresse_destinataire, nb_supports, id_type_support, pbt, ca, id_equipe) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-                $stmt->execute([$num_ot, $expediteur, $rue_exp, $cp_exp, $ville_exp, $destinataire, $rue_dest, $cp_dest, $ville_dest, $nb_supports, $type_supports, $pbt, $ca, $id_equipe]);
+                $stmt = $pdo->prepare("INSERT INTO zl_ordres_transport (numero_ot, expediteur, rue_adresse_expediteur, cp_adresse_expediteur, ville_adresse_expediteur, destinataire, rue_adresse_destinataire, cp_adresse_destinataire, ville_adresse_destinataire, nb_supports, id_type_support, pbt, ca, id_equipe) VALUES (:numero_ot, :expediteur, :rue_adresse_expediteur, :cp_adresse_expediteur, :ville_adresse_expediteur, :destinataire, :rue_adresse_destinataire, :cp_adresse_destinataire, :ville_adresse_destinataire, :nb_supports, :id_type_support, :pbt, :ca, :id_equipe)");
+                $stmt->execute([
+                    ':numero_ot'                => $num_ot,
+                    ':expediteur'               => $expediteur,
+                    ':rue_adresse_expediteur'   => $rue_exp,
+                    ':cp_adresse_expediteur'    => $cp_exp,
+                    ':ville_adresse_expediteur' => $ville_exp,
+                    ':destinataire'             => $destinataire,
+                    ':rue_adresse_destinataire' => $rue_dest,
+                    ':cp_adresse_destinataire'  => $cp_dest,
+                    ':ville_adresse_destinataire'=> $ville_dest,
+                    ':nb_supports'              => $nb_supports,
+                    ':id_type_support'          => $type_supports,
+                    ':pbt'                      => $pbt,
+                    ':ca'                       => $ca,
+                    ':id_equipe'                => $id_equipe
+                ]);
                 $msg = "Nouvel Ordre de Transport ajouté avec succès.";
             }
         }
@@ -260,15 +333,15 @@ switch ($action) {
     case 'delete_ot':
         $id = intval($_POST['id'] ?? 0);
 
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_lignes_activite WHERE id_ot = ?");
-        $stmt_check->execute([$id]);
+        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_lignes_activite WHERE id_ot = :id_ot");
+        $stmt_check->execute([':id_ot' => $id]);
 
         if ($stmt_check->fetchColumn() > 0) {
             $status = 'error';
             $msg = "Impossible de supprimer cet Ordre de Transport : il est déjà associé à des lignes d'activité.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM zl_ordres_transport WHERE id_ot = ?");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("DELETE FROM zl_ordres_transport WHERE id_ot = :id_ot");
+            $stmt->execute([':id_ot' => $id]);
             $status = 'success';
             $msg = "Ordre de transport supprimé.";
         }
@@ -348,7 +421,9 @@ switch ($action) {
                                     (numero_ot, expediteur, rue_adresse_expediteur, cp_adresse_expediteur, ville_adresse_expediteur,
                                      destinataire, rue_adresse_destinataire, cp_adresse_destinataire, ville_adresse_destinataire,
                                      nb_supports, id_type_support, pbt, ca, id_equipe)
-                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    VALUES (:numero_ot, :expediteur, :rue_adresse_expediteur, :cp_adresse_expediteur, :ville_adresse_expediteur,
+                                            :destinataire, :rue_adresse_destinataire, :cp_adresse_destinataire, :ville_adresse_destinataire,
+                                            :nb_supports, :id_type_support, :pbt, :ca, :id_equipe)
                                     ON DUPLICATE KEY UPDATE
                                     expediteur = VALUES(expediteur),
                                     rue_adresse_expediteur = VALUES(rue_adresse_expediteur),
@@ -413,28 +488,42 @@ switch ($action) {
 
                                 if (!empty($equipe_brute)) {
                                     if (is_numeric($equipe_brute)) {
-                                        $stmtCheckEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE id_equipe = ? LIMIT 1");
-                                        $stmtCheckEq->execute([intval($equipe_brute)]);
+                                        $stmtCheckEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE id_equipe = :id_equipe LIMIT 1");
+                                        $stmtCheckEq->execute([':id_equipe' => intval($equipe_brute)]);
                                         if ($e_row = $stmtCheckEq->fetch()) {
                                             $id_equipe = $e_row['id_equipe'];
                                         }
                                     } else {
-                                        $stmtEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE nom_equipe = ? OR login_equipe = ? LIMIT 1");
-                                        $stmtEq->execute([$equipe_brute, $equipe_brute]);
+                                        $stmtEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE nom_equipe = :nom_equipe OR login_equipe = :login_equipe LIMIT 1");
+                                        $stmtEq->execute([
+                                            ':nom_equipe'   => $equipe_brute,
+                                            ':login_equipe' => $equipe_brute
+                                        ]);
                                         if ($e_row = $stmtEq->fetch()) {
                                             $id_equipe = $e_row['id_equipe'];
                                         }
                                     }
                                 }
 
-                                $stmtCheck = $pdo->prepare("SELECT id_ot FROM zl_ordres_transport WHERE numero_ot = ?");
-                                $stmtCheck->execute([$numero_ot]);
+                                $stmtCheck = $pdo->prepare("SELECT id_ot FROM zl_ordres_transport WHERE numero_ot = :numero_ot");
+                                $stmtCheck->execute([':numero_ot' => $numero_ot]);
                                 $exists = $stmtCheck->fetch();
 
                                 $stmt->execute([
-                                    $numero_ot, $expediteur, $rue_exp, $cp_exp, $ville_exp,
-                                    $destinataire, $rue_dest, $cp_dest, $ville_dest,
-                                    $nb_supports, $id_type_support, $pbt, $ca, $id_equipe
+                                    ':numero_ot'                 => $numero_ot,
+                                    ':expediteur'                => $expediteur,
+                                    ':rue_adresse_expediteur'    => $rue_exp,
+                                    ':cp_adresse_expediteur'     => $cp_exp,
+                                    ':ville_adresse_expediteur'  => $ville_exp,
+                                    ':destinataire'              => $destinataire,
+                                    ':rue_adresse_destinataire'  => $rue_dest,
+                                    ':cp_adresse_destinataire'   => $cp_dest,
+                                    ':ville_adresse_destinataire' => $ville_dest,
+                                    ':nb_supports'               => $nb_supports,
+                                    ':id_type_support'           => $id_type_support,
+                                    ':pbt'                       => $pbt,
+                                    ':ca'                        => $ca,
+                                    ':id_equipe'                 => $id_equipe
                                 ]);
 
                                 if ($exists) {
@@ -487,12 +576,23 @@ switch ($action) {
         }
 
         if ($id) {
-            $stmt = $pdo->prepare("UPDATE zl_vehicules SET libelle=?, id_type=?, id_carrosserie=?, id_energie=? WHERE id_vehicule=?");
-            $stmt->execute([$libelle, $id_type, $id_carrosserie, $id_energie, $id]);
+            $stmt = $pdo->prepare("UPDATE zl_vehicules SET libelle = :libelle, id_type = :id_type, id_carrosserie = :id_carrosserie, id_energie = :id_energie WHERE id_vehicule = :id_vehicule");
+            $stmt->execute([
+                ':libelle'        => $libelle,
+                ':id_type'        => $id_type,
+                ':id_carrosserie' => $id_carrosserie,
+                ':id_energie'     => $id_energie,
+                ':id_vehicule'    => $id
+            ]);
             $msg = "Véhicule mis à jour.";
         } else {
-            $stmt = $pdo->prepare("INSERT INTO zl_vehicules (libelle, id_type, id_carrosserie, id_energie) VALUES (?, ?, ?, ?)");
-            $stmt->execute([$libelle, $id_type, $id_carrosserie, $id_energie]);
+            $stmt = $pdo->prepare("INSERT INTO zl_vehicules (libelle, id_type, id_carrosserie, id_energie) VALUES (:libelle, :id_type, :id_carrosserie, :id_energie)");
+            $stmt->execute([
+                ':libelle'        => $libelle,
+                ':id_type'        => $id_type,
+                ':id_carrosserie' => $id_carrosserie,
+                ':id_energie'     => $id_energie
+            ]);
             $msg = "Véhicule ajouté.";
         }
         break;
@@ -510,12 +610,19 @@ switch ($action) {
             $status = 'error';
             $msg = "Valeurs invalides.";
         } elseif ($id_energie) {
-            $stmt = $pdo->prepare('UPDATE ref_energies SET libelle = ?, cout_km = ? WHERE id_energie = ?');
-            $stmt->execute([$libelle, $cout_km, $id_energie]);
+            $stmt = $pdo->prepare('UPDATE ref_energies SET libelle = :libelle, cout_km = :cout_km WHERE id_energie = :id_energie');
+            $stmt->execute([
+                ':libelle'    => $libelle,
+                ':cout_km'    => $cout_km,
+                ':id_energie' => $id_energie
+            ]);
             $msg = "Énergie mise à jour.";
         } else {
-            $stmt = $pdo->prepare('INSERT INTO ref_energies (libelle, cout_km) VALUES (?, ?)');
-            $stmt->execute([$libelle, $cout_km]);
+            $stmt = $pdo->prepare('INSERT INTO ref_energies (libelle, cout_km) VALUES (:libelle, :cout_km)');
+            $stmt->execute([
+                ':libelle' => $libelle,
+                ':cout_km' => $cout_km
+            ]);
             $msg = "Énergie ajoutée.";
         }
         break;
@@ -527,15 +634,15 @@ switch ($action) {
         // 🔒 Comme pour les lycées/zones : on bloque la suppression si des
         // véhicules dépendent encore de cette énergie, plutôt que de
         // casser leur coût au km (ou violer la contrainte NOT NULL).
-        $stmt_check = $pdo->prepare('SELECT COUNT(*) FROM zl_vehicules WHERE id_energie = ?');
-        $stmt_check->execute([$id_energie]);
+        $stmt_check = $pdo->prepare('SELECT COUNT(*) FROM zl_vehicules WHERE id_energie = :id_energie');
+        $stmt_check->execute([':id_energie' => $id_energie]);
 
         if ($stmt_check->fetchColumn() > 0) {
             $status = 'error';
             $msg = "Impossible de supprimer cette énergie : elle est utilisée par au moins un véhicule.";
         } else {
-            $stmt = $pdo->prepare('DELETE FROM ref_energies WHERE id_energie = ?');
-            $stmt->execute([$id_energie]);
+            $stmt = $pdo->prepare('DELETE FROM ref_energies WHERE id_energie = :id_energie');
+            $stmt->execute([':id_energie' => $id_energie]);
             $msg = "Énergie supprimée.";
         }
         break;
@@ -543,15 +650,15 @@ switch ($action) {
     case 'delete_vehicule':
         $id = intval($_POST['id'] ?? 0);
 
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_vehicule = ?");
-        $stmt_check->execute([$id]);
+        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_vehicule = :id_vehicule");
+        $stmt_check->execute([':id_vehicule' => $id]);
 
         if ($stmt_check->fetchColumn() > 0) {
             $status = 'error';
             $msg = "Impossible de supprimer ce véhicule : il est utilisé dans des feuilles de route existantes.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM zl_vehicules WHERE id_vehicule = ?");
-            $stmt->execute([$id]);
+            $stmt = $pdo->prepare("DELETE FROM zl_vehicules WHERE id_vehicule = :id_vehicule");
+            $stmt->execute([':id_vehicule' => $id]);
             $msg = "Véhicule supprimé.";
         }
 
@@ -562,56 +669,56 @@ switch ($action) {
     // SAUVEGARDE DE LA CONFIGURATION ZL (zl_config_parametres)
     // =========================================================================
     case 'save_config':
-        $id_config                  = intval($_POST['id_config']);
-        $vitesse_moyenne_kmh        = intval($_POST['vitesse_moyenne_kmh']);
-        $temps_chargement_h         = floatval($_POST['temps_chargement_h']);
-        $temps_dechargement_h       = floatval($_POST['temps_dechargement_h']);
-        $temps_pause_h              = floatval($_POST['temps_pause_h']);
+        $id_config                      = intval($_POST['id_config']);
+        $vitesse_moyenne_kmh            = intval($_POST['vitesse_moyenne_kmh']);
+        $temps_chargement_h             = floatval($_POST['temps_chargement_h']);
+        $temps_dechargement_h           = floatval($_POST['temps_dechargement_h']);
+        $temps_pause_h                  = floatval($_POST['temps_pause_h']);
         // 🆕  minimum (heures) : voir recalculerFeuille() dans actions.php (racine)
-        $repos_journalier_min_h     = max(0, floatval(str_replace(',', '.', $_POST['repos_journalier_min_h'] ?? '9')));
-        $heure_prise_service_defaut = floatval($_POST['heure_prise_service_defaut']);
-        $date_debut_challenge_zl    = $_POST['date_debut_challenge_zl'];
-        $date_fin_challenge_zl      = !empty($_POST['date_fin_challenge_zl']) ? $_POST['date_fin_challenge_zl'] : null;
-        $penalite_jour_non_roule    = floatval($_POST['penalite_jour_non_roule']);
+        $repos_journalier_min_h         = max(0, floatval(str_replace(',', '.', $_POST['repos_journalier_min_h'] ?? '9')));
+        $heure_prise_service_defaut     = floatval($_POST['heure_prise_service_defaut']);
+        $date_debut_challenge_zl        = $_POST['date_debut_challenge_zl'];
+        $date_fin_challenge_zl          = !empty($_POST['date_fin_challenge_zl']) ? $_POST['date_fin_challenge_zl'] : null;
+        $penalite_jour_non_roule        = floatval($_POST['penalite_jour_non_roule']);
         // 🆕 Barème des malus du classement pondéré
         $malus_infraction_conduite_repos = floatval($_POST['malus_infraction_conduite_repos'] ?? 1);
         // 🆕 Réintégré (voir migration_rechargement_hors_zone.sql)
         $malus_rechargement_hors_zone    = floatval($_POST['malus_rechargement_hors_zone'] ?? 50);
-        $date_application           = date('Y-m-d');
+        $date_application               = date('Y-m-d');
 
         $redirect = './?section=config-zl';
 
         if ($id_config > 0) {
             $sql = "UPDATE zl_config_parametres SET
-                        vitesse_moyenne_kmh = ?,
-                        temps_chargement_h = ?,
-                        temps_dechargement_h = ?,
-                        temps_pause_h = ?,
-                        repos_journalier_min_h = ?,
-                        heure_prise_service_defaut = ?,
-                        date_debut_challenge_zl = ?,
-                        date_fin_challenge_zl = ?,
-                        penalite_jour_non_roule = ?,
-                        malus_infraction_conduite_repos = ?,
-                        malus_rechargement_hors_zone = ?,
-                        date_application = ?
-                    WHERE id_config = ?";
+                        vitesse_moyenne_kmh = :vitesse_moyenne_kmh,
+                        temps_chargement_h = :temps_chargement_h,
+                        temps_dechargement_h = :temps_dechargement_h,
+                        temps_pause_h = :temps_pause_h,
+                        repos_journalier_min_h = :repos_journalier_min_h,
+                        heure_prise_service_defaut = :heure_prise_service_defaut,
+                        date_debut_challenge_zl = :date_debut_challenge_zl,
+                        date_fin_challenge_zl = :date_fin_challenge_zl,
+                        penalite_jour_non_roule = :penalite_jour_non_roule,
+                        malus_infraction_conduite_repos = :malus_infraction_conduite_repos,
+                        malus_rechargement_hors_zone = :malus_rechargement_hors_zone,
+                        date_application = :date_application
+                    WHERE id_config = :id_config";
 
             $stmt = $pdo->prepare($sql);
             $stmt->execute([
-                $vitesse_moyenne_kmh,
-                $temps_chargement_h,
-                $temps_dechargement_h,
-                $temps_pause_h,
-                $repos_journalier_min_h,
-                $heure_prise_service_defaut,
-                $date_debut_challenge_zl,
-                $date_fin_challenge_zl,
-                $penalite_jour_non_roule,
-                $malus_infraction_conduite_repos,
-                $malus_rechargement_hors_zone,
-                $date_application,
-                $id_config
+                ':vitesse_moyenne_kmh'             => $vitesse_moyenne_kmh,
+                ':temps_chargement_h'              => $temps_chargement_h,
+                ':temps_dechargement_h'            => $temps_dechargement_h,
+                ':temps_pause_h'                   => $temps_pause_h,
+                ':repos_journalier_min_h'          => $repos_journalier_min_h,
+                ':heure_prise_service_defaut'      => $heure_prise_service_defaut,
+                ':date_debut_challenge_zl'         => $date_debut_challenge_zl,
+                ':date_fin_challenge_zl'           => $date_fin_challenge_zl,
+                ':penalite_jour_non_roule'         => $penalite_jour_non_roule,
+                ':malus_infraction_conduite_repos' => $malus_infraction_conduite_repos,
+                ':malus_rechargement_hors_zone'    => $malus_rechargement_hors_zone,
+                ':date_application'                => $date_application,
+                ':id_config'                       => $id_config
             ]);
 
             $status = 'success';
@@ -637,9 +744,15 @@ switch ($action) {
             // Relation symétrique : on enregistre les deux sens.
             // INSERT IGNORE évite une erreur si la relation existe déjà
             // (clé primaire composite code_dept + code_dept_limitrophe).
-            $stmt = $pdo->prepare('INSERT IGNORE INTO zl_departements_limitrophes (code_dept, code_dept_limitrophe) VALUES (?, ?)');
-            $stmt->execute([$code, $code_voisin]);
-            $stmt->execute([$code_voisin, $code]);
+            $stmt = $pdo->prepare('INSERT IGNORE INTO zl_departements_limitrophes (code_dept, code_dept_limitrophe) VALUES (:code_dept, :code_dept_limitrophe)');
+            $stmt->execute([
+                ':code_dept'            => $code,
+                ':code_dept_limitrophe' => $code_voisin
+            ]);
+            $stmt->execute([
+                ':code_dept'            => $code_voisin,
+                ':code_dept_limitrophe' => $code
+            ]);
             $msg = "Relation de voisinage ajoutée.";
         }
         break;
@@ -649,8 +762,13 @@ switch ($action) {
         $code_voisin = trim($_POST['code_dept_limitrophe'] ?? '');
         $redirect = './?section=departements&dept=' . urlencode($code);
 
-        $stmt = $pdo->prepare('DELETE FROM zl_departements_limitrophes WHERE (code_dept = ? AND code_dept_limitrophe = ?) OR (code_dept = ? AND code_dept_limitrophe = ?)');
-        $stmt->execute([$code, $code_voisin, $code_voisin, $code]);
+        $stmt = $pdo->prepare('DELETE FROM zl_departements_limitrophes WHERE (code_dept = :code_dept_1 AND code_dept_limitrophe = :code_voisin_1) OR (code_dept = :code_voisin_2 AND code_dept_limitrophe = :code_dept_2)');
+        $stmt->execute([
+            ':code_dept_1'   => $code,
+            ':code_voisin_1' => $code_voisin,
+            ':code_voisin_2' => $code_voisin,
+            ':code_dept_2'   => $code
+        ]);
         $msg = "Relation de voisinage supprimée.";
         break;
 
