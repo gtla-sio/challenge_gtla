@@ -20,10 +20,10 @@ if ($dept_selectionne) {
         "SELECT r.code_dept, r.nom_dept
          FROM zl_departements_limitrophes l
          JOIN ref_departements r ON r.code_dept = l.code_dept_limitrophe
-         WHERE l.code_dept = ?
+         WHERE l.code_dept = :code_dept
          ORDER BY r.code_dept"
     );
-    $stmt->execute([$dept_selectionne]);
+    $stmt->execute([':code_dept' => $dept_selectionne]);
     $voisins = $stmt->fetchAll();
 }
 
