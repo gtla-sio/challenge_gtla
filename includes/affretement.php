@@ -12,8 +12,8 @@ $id_equipe = (int) $_SESSION['team_id'];
 $csrf_token = $_SESSION['csrf_token'] ?? '';
 
 // Liste des autres équipes, pour le formulaire "Affréter à..."
-$stmtAutresEquipes = $pdo->prepare('SELECT id_equipe, nom_equipe FROM equipes WHERE id_equipe != ? ORDER BY nom_equipe');
-$stmtAutresEquipes->execute([$id_equipe]);
+$stmtAutresEquipes = $pdo->prepare('SELECT id_equipe, nom_equipe FROM equipes WHERE id_equipe != :id_equipe ORDER BY nom_equipe');
+$stmtAutresEquipes->execute([':id_equipe' => $id_equipe]);
 $autres_equipes = $stmtAutresEquipes->fetchAll();
 
 // -----------------------------------------------------------------------
@@ -22,7 +22,7 @@ $autres_equipes = $stmtAutresEquipes->fetchAll();
 $stmtMesOts = $pdo->prepare(
     'SELECT id_ot, numero_ot, expediteur, destinataire, ca
      FROM zl_ordres_transport
-     WHERE id_equipe = ?
+     WHERE id_equipe = :id_equipe
      ORDER BY numero_ot'
 );
 $stmtMesOts->execute([$id_equipe]);
@@ -31,8 +31,8 @@ $mes_ots = $stmtMesOts->fetchAll();
 foreach ($mes_ots as &$ot) {
     $ot['affretement'] = affretementActifPourOt($pdo, $ot['id_ot']);
 
-    $stmtLignes = $pdo->prepare('SELECT 1 FROM zl_lignes_activite WHERE id_ot = ? LIMIT 1');
-    $stmtLignes->execute([$ot['id_ot']]);
+    $stmtLignes = $pdo->prepare('SELECT 1 FROM zl_lignes_activite WHERE id_ot = :id_ot LIMIT 1');
+    $stmtLignes->execute([':id_ot' => $ot['id_ot']]);
     $ot['deja_exploite'] = (bool) $stmtLignes->fetchColumn();
 
     // Dernier refus éventuel (pour affichage explicite), même logique que
@@ -43,10 +43,10 @@ foreach ($mes_ots as &$ot) {
             'SELECT a.statut, e.nom_equipe AS nom_affrete
              FROM zl_affretements a
              JOIN equipes e ON a.id_equipe_affrete = e.id_equipe
-             WHERE a.id_ot = ?
+             WHERE a.id_ot = :id_ot
              ORDER BY a.id_affretement DESC LIMIT 1'
         );
-        $stmtDernier->execute([$ot['id_ot']]);
+        $stmtDernier->execute([':id_ot' => $ot['id_ot']]);
         $dernier = $stmtDernier->fetch();
         if ($dernier && $dernier['statut'] === 'refusee') {
             $ot['refus'] = $dernier;
@@ -65,10 +65,10 @@ $stmtRecues = $pdo->prepare(
      FROM zl_affretements a
      JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
      JOIN equipes e ON a.id_equipe_affreteur = e.id_equipe
-     WHERE a.id_equipe_affrete = ? AND a.statut = 'en_attente'
+     WHERE a.id_equipe_affrete = :id_equipe_affrete AND a.statut = 'en_attente'
      ORDER BY a.date_declaration ASC"
 );
-$stmtRecues->execute([$id_equipe]);
+$stmtRecues->execute([':id_equipe_affrete' => $id_equipe]);
 $propositions_recues = $stmtRecues->fetchAll();
 
 // -----------------------------------------------------------------------
@@ -80,10 +80,10 @@ $stmtExecutesPourAutrui = $pdo->prepare(
      FROM zl_affretements a
      JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
      JOIN equipes e ON a.id_equipe_affreteur = e.id_equipe
-     WHERE a.id_equipe_affrete = ? AND a.statut = 'acceptee'
+     WHERE a.id_equipe_affrete = :id_equipe_affrete AND a.statut = 'acceptee'
      ORDER BY ot.numero_ot"
 );
-$stmtExecutesPourAutrui->execute([$id_equipe]);
+$stmtExecutesPourAutrui->execute([':id_equipe_affrete' => $id_equipe]);
 $executes_pour_autrui = $stmtExecutesPourAutrui->fetchAll();
 ?>
 <h2 class="fw-bold text-dark mb-4">Affrètement</h2>

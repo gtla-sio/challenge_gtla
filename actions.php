@@ -61,27 +61,33 @@ function recalculerFeuille($pdo, $id_feuille, ?array $dates_controlees = null): 
 
     // 0. Les s sont toujours recalculés : on supprime les
     //    existants, ils sont réinsérés à l'étape 5.
-    $pdo->prepare("DELETE FROM zl_lignes_activite WHERE id_feuille = ? AND type_activite = ?")
-        ->execute([$id_feuille, ACTIVITE_REPOS_JOURNALIER]);
+    $pdo->prepare("DELETE FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND type_activite = :type_activite")
+        ->execute([
+            ':id_feuille'    => $id_feuille,
+            ':type_activite' => ACTIVITE_REPOS_JOURNALIER
+        ]);
 
     // 1. RÉINDEXATION ROBUSTE
     // 🆕 Tri par DATE puis par ordre de saisie dans la journée. Avant, le
     // tri se faisait sur l'ordre de saisie seul : avec la saisie jour par
     // jour, compléter le jour 1 après avoir commencé le jour 2 mélangeait
     // les jours et faussait les cumuls et les horaires.
-    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = ? ORDER BY date_activite ASC, ordre_chronologique ASC, id_ligne ASC");
-    $stmt_get->execute([$id_feuille]);
+    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = :id_feuille ORDER BY date_activite ASC, ordre_chronologique ASC, id_ligne ASC");
+    $stmt_get->execute([':id_feuille' => $id_feuille]);
     $lignes = $stmt_get->fetchAll();
 
     $i = 1;
     foreach ($lignes as $ligne) {
-        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = ? WHERE id_ligne = ?")
-            ->execute([$i++, $ligne['id_ligne']]);
+        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = :ordre_chronologique WHERE id_ligne = :id_ligne")
+            ->execute([
+                ':ordre_chronologique' => $i++,
+                ':id_ligne'            => $ligne['id_ligne']
+            ]);
     }
 
     // 2. RÉCUPÉRATION DONNÉES ET CONFIG
-    $stmtActivites = $pdo->prepare("SELECT * FROM zl_lignes_activite WHERE id_feuille = ? ORDER BY ordre_chronologique ASC");
-    $stmtActivites->execute([$id_feuille]);
+    $stmtActivites = $pdo->prepare("SELECT * FROM zl_lignes_activite WHERE id_feuille = :id_feuille ORDER BY ordre_chronologique ASC");
+    $stmtActivites->execute([':id_feuille' => $id_feuille]);
     $activites = $stmtActivites->fetchAll();
 
     $stmtConf = $pdo->query("SELECT heure_prise_service_defaut, temps_chargement_h, temps_dechargement_h, temps_pause_h, vitesse_moyenne_kmh, repos_journalier_min_h FROM zl_config_parametres WHERE id_config = 1");
@@ -149,18 +155,18 @@ function recalculerFeuille($pdo, $id_feuille, ?array $dates_controlees = null): 
 
         // D. Mise à jour de la base
         $sql = "UPDATE zl_lignes_activite SET
-                horaire_debut = ?,
-                conduite_continue_cumul = ?,
-                total_conduite_cumul = ?,
-                total_service_cumul = ?
-                WHERE id_ligne = ?";
+                horaire_debut = :horaire_debut,
+                conduite_continue_cumul = :conduite_continue_cumul,
+                total_conduite_cumul = :total_conduite_cumul,
+                total_service_cumul = :total_service_cumul
+                WHERE id_ligne = :id_ligne";
 
         $pdo->prepare($sql)->execute([
-            $horaire_courant,
-            $conduite_continue_cumul,
-            $total_conduite_cumul,
-            $total_service_cumul,
-            $l['id_ligne']
+            ':horaire_debut'           => $horaire_courant,
+            ':conduite_continue_cumul' => $conduite_continue_cumul,
+            ':total_conduite_cumul'    => $total_conduite_cumul,
+            ':total_service_cumul'     => $total_service_cumul,
+            ':id_ligne'                => $l['id_ligne']
         ]);
 
         // 🆕 D bis. Une activité qui dure (conduite, chargement, déchargement,
@@ -201,7 +207,7 @@ function recalculerFeuille($pdo, $id_feuille, ?array $dates_controlees = null): 
         'INSERT INTO zl_lignes_activite
             (id_feuille, id_ot, ordre_chronologique, date_activite, horaire_debut, type_activite, km_parcouru, duree_repos_h, est_debut_journee,
              conduite_continue_cumul, total_conduite_cumul, total_service_cumul)
-         VALUES (?, ?, 0, ?, ?, ?, 0, ?, 0, 0, ?, ?)'
+         VALUES (:id_feuille, :id_ot, 0, :date_activite, :horaire_debut, :type_activite, 0, :duree_repos_h, 0, 0, :total_conduite_cumul, :total_service_cumul)'
     );
 
     foreach ($fins_de_jour as $jour => $fj) {
@@ -227,19 +233,28 @@ function recalculerFeuille($pdo, $id_feuille, ?array $dates_controlees = null): 
         // La ligne reprend l'OT de la dernière ligne du jour (pas de faux
         // changement d'OT) et les cumuls du jour, comme les anciens repos saisis.
         $stmtRepos->execute([
-            $id_feuille, $fj['id_ot'], $jour, $fj['fin'], ACTIVITE_REPOS_JOURNALIER,
-            max(0.0, $repos), $fj['total_conduite'], $fj['total_service']
+            ':id_feuille'           => $id_feuille,
+            ':id_ot'                => $fj['id_ot'],
+            ':date_activite'        => $jour,
+            ':horaire_debut'        => $fj['fin'],
+            ':type_activite'        => ACTIVITE_REPOS_JOURNALIER,
+            ':duree_repos_h'        => max(0.0, $repos),
+            ':total_conduite_cumul' => $fj['total_conduite'],
+            ':total_service_cumul'  => $fj['total_service'],
         ]);
     }
 
     // 6. RÉINDEXATION FINALE : le repos est toujours la dernière ligne de son jour
-    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = ?
+    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = :id_feuille
         ORDER BY date_activite ASC, (type_activite = '" . ACTIVITE_REPOS_JOURNALIER . "') ASC, ordre_chronologique ASC, id_ligne ASC");
-    $stmt_get->execute([$id_feuille]);
+    $stmt_get->execute([':id_feuille' => $id_feuille]);
     $i = 1;
     foreach ($stmt_get->fetchAll() as $ligne) {
-        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = ? WHERE id_ligne = ?")
-            ->execute([$i++, $ligne['id_ligne']]);
+        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = :ordre_chronologique WHERE id_ligne = :id_ligne")
+            ->execute([
+                ':ordre_chronologique' => $i++,
+                ':id_ligne'            => $ligne['id_ligne']
+            ]);
     }
 
     return $violations;
@@ -304,20 +319,32 @@ $id_vehicule = $_POST['id_vehicule'] ?? null;
 // création — cette partie du code était déjà correcte.
 if ($id_vehicule && !empty($date_debut)) {
     $stmt = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea
-                           WHERE id_equipe = ? AND id_vehicule = ? AND date_debut_semaine = ?");
-    $stmt->execute([$id_equipe, $id_vehicule, $date_debut]);
+                           WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine");
+    $stmt->execute([
+        ':id_equipe'          => $id_equipe,
+        ':id_vehicule'        => $id_vehicule,
+        ':date_debut_semaine' => $date_debut
+    ]);
     $feuille = $stmt->fetch();
 
     if ($feuille) {
         $id_feuille = $feuille['id_feuille'];
     } else {
         try {
-            $stmtCreate = $pdo->prepare("INSERT INTO zl_feuilles_otea (id_equipe, id_vehicule, date_debut_semaine) VALUES (?, ?, ?)");
-            $stmtCreate->execute([$id_equipe, $id_vehicule, $date_debut]);
+            $stmtCreate = $pdo->prepare("INSERT INTO zl_feuilles_otea (id_equipe, id_vehicule, date_debut_semaine) VALUES (:id_equipe, :id_vehicule, :date_debut_semaine)");
+            $stmtCreate->execute([
+                ':id_equipe'          => $id_equipe,
+                ':id_vehicule'        => $id_vehicule,
+                ':date_debut_semaine' => $date_debut
+            ]);
             $id_feuille = $pdo->lastInsertId();
         } catch (PDOException $e) {
-            $stmt = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = ? AND id_vehicule = ? AND date_debut_semaine = ?");
-            $stmt->execute([$id_equipe, $id_vehicule, $date_debut]);
+            $stmt = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine");
+            $stmt->execute([
+                ':id_equipe'          => $id_equipe,
+                ':id_vehicule'        => $id_vehicule,
+                ':date_debut_semaine' => $date_debut
+            ]);
             $id_feuille = $stmt->fetchColumn();
         }
     }
@@ -356,8 +383,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     // 🆕 Le  est calculé automatiquement : il ne se supprime pas.
-    $stmtLigne = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = ?');
-    $stmtLigne->execute([$id_ligne]);
+    $stmtLigne = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
+    $stmtLigne->execute([':id_ligne' => $id_ligne]);
     $ligne_a_supprimer = $stmtLigne->fetch();
 
     if ($ligne_a_supprimer['type_activite'] === ACTIVITE_REPOS_JOURNALIER) {
@@ -366,7 +393,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     }
 
     $erreur_repos = executerAvecControleRepos($pdo, (int) $id_feuille_recupere, $ligne_a_supprimer['date_activite'], function () use ($pdo, $id_ligne) {
-        $pdo->prepare('DELETE FROM zl_lignes_activite WHERE id_ligne = ?')->execute([$id_ligne]);
+        $pdo->prepare('DELETE FROM zl_lignes_activite WHERE id_ligne = :id_ligne')->execute([':id_ligne' => $id_ligne]);
     }, false);
 
     if ($erreur_repos) {
@@ -388,8 +415,8 @@ if (isset($_POST['declarer_affretement'])) {
 
     // Vérifications métier, dans l'ordre où un problème doit être signalé
     // à l'utilisateur :
-    $stmtOt = $pdo->prepare('SELECT id_equipe FROM zl_ordres_transport WHERE id_ot = ?');
-    $stmtOt->execute([$id_ot]);
+    $stmtOt = $pdo->prepare('SELECT id_equipe FROM zl_ordres_transport WHERE id_ot = :id_ot');
+    $stmtOt->execute([':id_ot' => $id_ot]);
     $ot = $stmtOt->fetch();
 
     if (!$ot || (int)$ot['id_equipe'] !== $id_equipe) {
@@ -404,8 +431,8 @@ if (isset($_POST['declarer_affretement'])) {
         exit;
     }
 
-    $stmtCibleExiste = $pdo->prepare('SELECT 1 FROM equipes WHERE id_equipe = ?');
-    $stmtCibleExiste->execute([$id_equipe_cible]);
+    $stmtCibleExiste = $pdo->prepare('SELECT 1 FROM equipes WHERE id_equipe = :id_equipe');
+    $stmtCibleExiste->execute([':id_equipe' => $id_equipe_cible]);
     if (!$stmtCibleExiste->fetchColumn()) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Équipe cible invalide."));
         exit;
@@ -426,8 +453,8 @@ if (isset($_POST['declarer_affretement'])) {
     // On refuse aussi si l'équipe a déjà commencé à exploiter cet OT
     // elle-même (des lignes d'activité existent déjà dessus) : il faut
     // choisir CAS 1 (exploitation) OU CAS 2 (affrètement), pas les deux.
-    $stmtDejaExploite = $pdo->prepare('SELECT 1 FROM zl_lignes_activite WHERE id_ot = ? LIMIT 1');
-    $stmtDejaExploite->execute([$id_ot]);
+    $stmtDejaExploite = $pdo->prepare('SELECT 1 FROM zl_lignes_activite WHERE id_ot = :id_ot LIMIT 1');
+    $stmtDejaExploite->execute([':id_ot' => $id_ot]);
     if ($stmtDejaExploite->fetchColumn()) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Impossible : cet OT a déjà des activités saisies en exploitation propre."));
         exit;
@@ -435,9 +462,14 @@ if (isset($_POST['declarer_affretement'])) {
 
     $stmt = $pdo->prepare(
         'INSERT INTO zl_affretements (id_ot, id_equipe_affreteur, id_equipe_affrete, prix_affretement, statut)
-         VALUES (?, ?, ?, ?, "en_attente")'
+         VALUES (:id_ot, :id_equipe_affreteur, :id_equipe_affrete, :prix_affretement, "en_attente")'
     );
-    $stmt->execute([$id_ot, $id_equipe, $id_equipe_cible, $prix]);
+    $stmt->execute([
+        ':id_ot'               => $id_ot,
+        ':id_equipe_affreteur' => $id_equipe,
+        ':id_equipe_affrete'   => $id_equipe_cible,
+        ':prix_affretement'    => $prix
+    ]);
 
     header("Location: index.php?section=affretement&status=success&msg=" . urlencode("Proposition d'affrètement envoyée."));
     exit;
@@ -456,17 +488,20 @@ if (isset($_POST['annuler_affretement'])) {
     // donnée ne se "désannule" pas).
     $stmt = $pdo->prepare(
         "SELECT id_affretement FROM zl_affretements
-         WHERE id_affretement = ? AND id_equipe_affreteur = ? AND statut = 'en_attente'"
+         WHERE id_affretement = :id_affretement AND id_equipe_affreteur = :id_equipe_affreteur AND statut = 'en_attente'"
     );
-    $stmt->execute([$id_affretement, $id_equipe]);
+    $stmt->execute([
+        ':id_affretement'      => $id_affretement,
+        ':id_equipe_affreteur' => $id_equipe
+    ]);
 
     if (!$stmt->fetchColumn()) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition n'existe pas, ne vous appartient pas, ou a déjà reçu une réponse."));
         exit;
     }
 
-    $stmtMaj = $pdo->prepare("UPDATE zl_affretements SET statut = 'annulee', date_reponse = NOW() WHERE id_affretement = ?");
-    $stmtMaj->execute([$id_affretement]);
+    $stmtMaj = $pdo->prepare("UPDATE zl_affretements SET statut = 'annulee', date_reponse = NOW() WHERE id_affretement = :id_affretement");
+    $stmtMaj->execute([':id_affretement' => $id_affretement]);
 
     header("Location: index.php?section=affretement&status=success&msg=" . urlencode("Proposition d'affrètement annulée."));
     exit;
@@ -488,9 +523,12 @@ if (isset($_POST['repondre_affretement'])) {
     // et uniquement si elle est encore "en_attente" (pas déjà tranchée).
     $stmt = $pdo->prepare(
         "SELECT id_affretement FROM zl_affretements
-         WHERE id_affretement = ? AND id_equipe_affrete = ? AND statut = 'en_attente'"
+         WHERE id_affretement = :id_affretement AND id_equipe_affrete = :id_equipe_affrete AND statut = 'en_attente'"
     );
-    $stmt->execute([$id_affretement, $id_equipe]);
+    $stmt->execute([
+        ':id_affretement'    => $id_affretement,
+        ':id_equipe_affrete' => $id_equipe
+    ]);
 
     if (!$stmt->fetchColumn()) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition n'existe pas, ne vous concerne pas, ou a déjà reçu une réponse."));
@@ -502,10 +540,13 @@ if (isset($_POST['repondre_affretement'])) {
     // écriture, on ne doit surtout pas écraser le statut 'annulee'.
     // rowCount() nous dit si la mise à jour a réellement eu lieu.
     $stmtMaj = $pdo->prepare(
-        "UPDATE zl_affretements SET statut = ?, date_reponse = NOW()
-         WHERE id_affretement = ? AND statut = 'en_attente'"
+        "UPDATE zl_affretements SET statut = :statut, date_reponse = NOW()
+         WHERE id_affretement = :id_affretement AND statut = 'en_attente'"
     );
-    $stmtMaj->execute([$reponse, $id_affretement]);
+    $stmtMaj->execute([
+        ':statut'         => $reponse,
+        ':id_affretement' => $id_affretement
+    ]);
 
     if ($stmtMaj->rowCount() === 0) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition vient d'être annulée par l'équipe demandeuse."));
@@ -534,9 +575,12 @@ if (isset($_POST['annuler_affretement'])) {
     // préalable) pour éviter qu'une acceptation simultanée soit écrasée.
     $stmt = $pdo->prepare(
         "UPDATE zl_affretements SET statut = 'annulee', date_reponse = NOW()
-         WHERE id_affretement = ? AND id_equipe_affreteur = ? AND statut = 'en_attente'"
+         WHERE id_affretement = :id_affretement AND id_equipe_affreteur = :id_equipe_affreteur AND statut = 'en_attente'"
     );
-    $stmt->execute([$id_affretement, $id_equipe]);
+    $stmt->execute([
+        ':id_affretement'      => $id_affretement,
+        ':id_equipe_affreteur' => $id_equipe
+    ]);
 
     if ($stmt->rowCount() === 0) {
         header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Annulation impossible : la proposition n'existe pas, ne vous appartient pas, ou a déjà reçu une réponse."));
@@ -586,8 +630,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $stmtVerif = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_feuille = ? AND id_vehicule = ? AND id_equipe = ? LIMIT 1");
-        $stmtVerif->execute([$id_feuille ?? 0, $id_vehicule, $id_equipe]);
+        $stmtVerif = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_feuille = :id_feuille AND id_vehicule = :id_vehicule AND id_equipe = :id_equipe LIMIT 1");
+        $stmtVerif->execute([
+            ':id_feuille'  => $id_feuille ?? 0,
+            ':id_vehicule' => $id_vehicule,
+            ':id_equipe'   => $id_equipe
+        ]);
         $feuille_valide = $stmtVerif->fetch();
 
         if (!$feuille_valide) {
@@ -603,8 +651,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($type_act === ACTIVITE_PRISE_DE_SERVICE) {
-            $stmtCheck = $pdo->prepare('SELECT COUNT(*) FROM zl_lignes_activite WHERE id_feuille = ? AND date_activite = ? AND type_activite = ?');
-            $stmtCheck->execute([$id_feuille, $date_act, ACTIVITE_PRISE_DE_SERVICE]);
+            $stmtCheck = $pdo->prepare('SELECT COUNT(*) FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND date_activite = :date_activite AND type_activite = :type_activite');
+            $stmtCheck->execute([
+                ':id_feuille'    => $id_feuille,
+                ':date_activite' => $date_act,
+                ':type_activite' => ACTIVITE_PRISE_DE_SERVICE
+            ]);
 
             if ($stmtCheck->fetchColumn() > 0) {
                 header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Impossible : une prise de service existe déjà pour la date du " . date("d/m/Y", strtotime($date_act)) . "."));
@@ -630,8 +682,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
 
-        $stmtOrdre = $pdo->prepare('SELECT IFNULL(MAX(ordre_chronologique), 0) + 1 FROM zl_lignes_activite WHERE id_feuille = ?');
-        $stmtOrdre->execute([$id_feuille]);
+        $stmtOrdre = $pdo->prepare('SELECT IFNULL(MAX(ordre_chronologique), 0) + 1 FROM zl_lignes_activite WHERE id_feuille = :id_feuille');
+        $stmtOrdre->execute([':id_feuille' => $id_feuille]);
         $ordre = $stmtOrdre->fetchColumn();
 
         // 🆕 Écriture + recalcul dans une transaction : refusée (et annulée)
@@ -640,9 +692,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare('INSERT INTO zl_lignes_activite
                 (id_feuille, id_ot, ordre_chronologique, date_activite, horaire_debut, type_activite, km_parcouru, duree_repos_h, est_debut_journee,
                 conduite_continue_cumul, total_conduite_cumul, total_service_cumul)
-                VALUES (?,?,?,?,?,?,?,?,?, 0, 0, 0)');
+                VALUES (:id_feuille, :id_ot, :ordre_chronologique, :date_activite, :horaire_debut, :type_activite, :km_parcouru, :duree_repos_h, :est_debut_journee, 0, 0, 0)');
 
-            $stmt->execute([$id_feuille, $id_ot, $ordre, $date_act, $horaire, $type_act, $km, $duree_repos, ($type_act === ACTIVITE_PRISE_DE_SERVICE ? 1 : 0)]);
+            $stmt->execute([
+                ':id_feuille'          => $id_feuille,
+                ':id_ot'               => $id_ot,
+                ':ordre_chronologique' => $ordre,
+                ':date_activite'       => $date_act,
+                ':horaire_debut'       => $horaire,
+                ':type_activite'       => $type_act,
+                ':km_parcouru'         => $km,
+                ':duree_repos_h'       => $duree_repos,
+                ':est_debut_journee'   => ($type_act === ACTIVITE_PRISE_DE_SERVICE ? 1 : 0)
+            ]);
         });
 
         if ($erreur_repos) {
@@ -672,8 +734,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         // 🆕 Ligne d'origine : le  (calculé) ne se modifie pas, et
         // la date d'une ligne ne change jamais (le formulaire la verrouille) :
         // on conserve celle de la base plutôt que celle envoyée par le formulaire.
-        $stmtOrig = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = ?');
-        $stmtOrig->execute([$id_ligne]);
+        $stmtOrig = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
+        $stmtOrig->execute([':id_ligne' => $id_ligne]);
         $ligne_origine = $stmtOrig->fetch();
 
         if ($ligne_origine['type_activite'] === ACTIVITE_REPOS_JOURNALIER) {
@@ -683,8 +745,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $date_act = $ligne_origine['date_activite'];
 
         $erreur_repos = executerAvecControleRepos($pdo, (int) $id_feuille_verifiee, $date_act, function () use ($pdo, $id_ot, $date_act, $horaire, $type_act, $km, $duree_repos, $id_ligne) {
-            $stmt = $pdo->prepare('UPDATE zl_lignes_activite SET id_ot=?, date_activite=?, horaire_debut=?, type_activite=?, km_parcouru=?, duree_repos_h=? WHERE id_ligne=?');
-            $stmt->execute([$id_ot, $date_act, $horaire, $type_act, $km, $duree_repos, $id_ligne]);
+            $stmt = $pdo->prepare('UPDATE zl_lignes_activite SET id_ot = :id_ot, date_activite = :date_activite, horaire_debut = :horaire_debut, type_activite = :type_activite, km_parcouru = :km_parcouru, duree_repos_h = :duree_repos_h WHERE id_ligne = :id_ligne');
+            $stmt->execute([
+                ':id_ot'         => $id_ot,
+                ':date_activite' => $date_act,
+                ':horaire_debut' => $horaire,
+                ':type_activite' => $type_act,
+                ':km_parcouru'   => $km,
+                ':duree_repos_h' => $duree_repos,
+                ':id_ligne'      => $id_ligne
+            ]);
         });
 
         $id_vehicule_redirection = isset($_POST['id_vehicule']) ? intval($_POST['id_vehicule']) : 0;

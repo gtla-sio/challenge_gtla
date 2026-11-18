@@ -164,14 +164,18 @@ if (!$date_jour) {
     return;
 }
 
-$stmtV = $pdo->prepare("SELECT libelle FROM zl_vehicules WHERE id_vehicule = ?");
-$stmtV->execute([$id_vehicule]);
+$stmtV = $pdo->prepare("SELECT libelle FROM zl_vehicules WHERE id_vehicule = :id_vehicule");
+$stmtV->execute([':id_vehicule' => $id_vehicule]);
 if ($v = $stmtV->fetch()) {
     $titre_tableau_de_bord = "Tableau de bord " . htmlspecialchars($v['libelle']) . " — " . formaterJourFr($date_jour, $noms_jours_fr);
 }
 
-$stmtF = $pdo->prepare('SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = ? AND id_vehicule = ? AND date_debut_semaine = ?');
-$stmtF->execute([$id_equipe, $id_vehicule, $date_debut_semaine]);
+$stmtF = $pdo->prepare('SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine');
+$stmtF->execute([
+    ':id_equipe' => $id_equipe,
+    ':id_vehicule' => $id_vehicule,
+    ':date_debut_semaine' => $date_debut_semaine
+]);
 if ($f = $stmtF->fetch()) {
     $id_feuille = $f['id_feuille'];
 
@@ -197,10 +201,13 @@ if ($f = $stmtF->fetch()) {
         FROM zl_lignes_activite l
         JOIN zl_ordres_transport ot ON l.id_ot = ot.id_ot
         JOIN zl_config_parametres p ON p.id_config = 1
-        WHERE l.id_feuille = ? AND l.date_activite = ?
+        WHERE l.id_feuille = :id_feuille AND l.date_activite = :date_activite
         ORDER BY l.ordre_chronologique ASC
     ');
-    $stmtL->execute([$id_feuille, $date_jour]);
+    $stmtL->execute([
+        ':id_feuille' => $id_feuille,
+        ':date_activite' => $date_jour
+    ]);
     $lignes = $stmtL->fetchAll();
 }
 
@@ -232,8 +239,8 @@ $ligne_a_modifier = null;
 if (isset($_GET['action']) && $_GET['action'] === 'modifier' && isset($_GET['id_ligne'])) {
     $id_ligne_demandee = intval($_GET['id_ligne']);
     if (ligneAppartientEquipe($pdo, $id_ligne_demandee, $id_equipe)) {
-        $stmtMod = $pdo->prepare('SELECT * FROM zl_lignes_activite WHERE id_ligne = ?');
-        $stmtMod->execute([$id_ligne_demandee]);
+        $stmtMod = $pdo->prepare('SELECT * FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
+        $stmtMod->execute([':id_ligne' => $id_ligne_demandee]);
         $ligne_a_modifier = $stmtMod->fetch();
 
         // 🆕 PLANNING PAR JOUR : le champ date n'est plus éditable dans le

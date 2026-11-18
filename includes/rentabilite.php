@@ -29,7 +29,7 @@ $stmt = $pdo->prepare(
     "SELECT ot.id_ot, ot.numero_ot, ot.expediteur, ot.destinataire, ot.ca AS ca_client,
             NULL AS prix_affretement, 'propre' AS origine
      FROM zl_ordres_transport ot
-     WHERE ot.id_equipe = ?
+     WHERE ot.id_equipe = :id_equipe_1
        AND NOT EXISTS (SELECT 1 FROM zl_affretements a WHERE a.id_ot = ot.id_ot AND a.statut = 'acceptee')
        AND EXISTS (SELECT 1 FROM zl_lignes_activite l WHERE l.id_ot = ot.id_ot)
      UNION ALL
@@ -37,10 +37,13 @@ $stmt = $pdo->prepare(
             a.prix_affretement, 'affrete' AS origine
      FROM zl_affretements a
      JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
-     WHERE a.id_equipe_affrete = ? AND a.statut = 'acceptee'
+     WHERE a.id_equipe_affrete = :id_equipe_2 AND a.statut = 'acceptee'
      ORDER BY numero_ot"
 );
-$stmt->execute([$id_equipe, $id_equipe]);
+$stmt->execute([
+    ':id_equipe_1' => $id_equipe,
+    ':id_equipe_2' => $id_equipe
+]);
 $mes_exploitations = $stmt->fetchAll();
 
 foreach ($mes_exploitations as &$ligne) {
@@ -60,9 +63,12 @@ foreach ($mes_exploitations as &$ligne) {
         "SELECT DISTINCT v.libelle FROM zl_lignes_activite l
          JOIN zl_feuilles_otea f ON l.id_feuille = f.id_feuille
          JOIN zl_vehicules v ON f.id_vehicule = v.id_vehicule
-         WHERE l.id_ot = ? AND f.id_equipe = ?"
+         WHERE l.id_ot = :id_ot AND f.id_equipe = :id_equipe"
     );
-    $stmtVeh->execute([$ligne['id_ot'], $id_equipe]);
+    $stmtVeh->execute([
+        ':id_ot'     => $ligne['id_ot'],
+        ':id_equipe' => $id_equipe
+    ]);
     $ligne['vehicules'] = implode(', ', $stmtVeh->fetchAll(PDO::FETCH_COLUMN));
 }
 unset($ligne);
