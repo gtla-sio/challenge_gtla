@@ -170,6 +170,7 @@ challenge_gtla/
 ├── admin/               administration (index.php, actions.php, includes/)
 ├── import/              modèle et exemple de fichier Excel d'import des OT
 └── bdd/challenge_gtla.sql   base complète avec données de démonstration
+└── docs/bdd/            documentation de la base de données (MCD, MLD, dictionnaire, règles de gestion)
 ```
 
 ## 6. Pistes d'évolution
