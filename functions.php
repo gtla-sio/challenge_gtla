@@ -35,7 +35,7 @@ const ACTIVITE_CONDUITE         = 'Conduite';
 const ACTIVITE_CHARGEMENT       = 'Chargement';
 const ACTIVITE_DECHARGEMENT     = 'Déchargement';
 const ACTIVITE_PAUSE            = 'Pause';
-const ACTIVITE_REPOS_JOURNALIER = '';
+const ACTIVITE_REPOS_JOURNALIER = 'Repos journalier';
 const ACTIVITE_FIN_DE_SERVICE   = 'Fin de service';
 
 const TYPES_ACTIVITE_VALIDES = [
