@@ -36,8 +36,8 @@ $ots = $stmt->fetchAll();
 
 $edit_ot = null;
 if (isset($_GET['edit'])) {
-    $stmtEdit = $pdo->prepare("SELECT * FROM zl_ordres_transport WHERE id_ot = ?");
-    $stmtEdit->execute([intval($_GET['edit'])]);
+    $stmtEdit = $pdo->prepare("SELECT * FROM zl_ordres_transport WHERE id_ot = :id_ot");
+    $stmtEdit->execute([':id_ot' => intval($_GET['edit'])]);
     $edit_ot = $stmtEdit->fetch();
 }
 ?>

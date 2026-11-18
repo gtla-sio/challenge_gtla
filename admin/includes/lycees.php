@@ -2,8 +2,8 @@
 $lycees = $pdo->query("SELECT * FROM lycees ORDER BY nom_lycee ASC")->fetchAll();
 $edit_lycee = null;
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM lycees WHERE id_lycee = ?");
-    $stmt->execute([intval($_GET['edit'])]);
+    $stmt = $pdo->prepare("SELECT * FROM lycees WHERE id_lycee = :id_lycee");
+    $stmt->execute([':id_lycee' => intval($_GET['edit'])]);
     $edit_lycee = $stmt->fetch();
 }
 ?>
