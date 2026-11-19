@@ -1,0 +1,56 @@
+# =====================================================================
+# Environnement Docker du projet Challenge GTLA - stage BTS SIO
+#   web        : Apache + PHP 8.2 avec PDO (image construite avec le Dockerfile)
+#   db         : MariaDB 10.4, comme le projet (base importée au 1er lancement)
+#   phpmyadmin : interface web d'administration de MariaDB
+# Démarrer : docker compose up -d --build     Arrêter : docker compose down
+# =====================================================================
+services:
+  # Serveur web : Apache + PHP (avec PDO et pdo_mysql)
+  web:
+    build: .
+    container_name: gtla_web
+    ports:
+      - "8090:80"                        # http://localhost:8090
+    volumes:
+      - ./challenge_gtla:/var/www/html   # le projet = la racine du site
+    environment:                         # lues par db.php avec getenv()
+      GTLA_DB_HOST: db
+      GTLA_DB_NAME: challenge_gtla
+      GTLA_DB_USER: root
+      GTLA_DB_PASS: root
+    depends_on:
+      - db
+
+  # Serveur de base de données : MariaDB 10.4
+  db:
+    image: mariadb:10.4
+    container_name: gtla_db
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_ROOT_PASSWORD: root        # poste de développement uniquement, jamais en production
+      MARIADB_DATABASE: challenge_gtla   # base créée au 1er lancement
+    ports:
+      - "3308:3306"                      # 3308 sur le poste : pas de conflit avec tp-sql ou XAMPP
+    volumes:
+      - gtla_db_data:/var/lib/mysql      # persistance des données
+      - ./challenge_gtla/bdd/challenge_gtla.sql:/docker-entrypoint-initdb.d/challenge_gtla.sql:ro
+
+  # phpMyAdmin
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: gtla_phpmyadmin
+    restart: unless-stopped
+    ports:
+      - "8091:80"                        # http://localhost:8091
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: root
+    depends_on:
+      - db
+
+# Volume nommé : les données de MariaDB survivent à l'arrêt des conteneurs.
+volumes:
+  gtla_db_data:
