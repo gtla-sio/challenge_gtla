@@ -2,6 +2,8 @@
 // db.php - Connexion centralisée à la base de données
 //
 // 🔒 CORRECTION SÉCURITÉ n°1 : identifiants de connexion
+// CORRECTION SÉCURITÉ n°1 : configuration chargée depuis l'environnement,
+// (via .env en production ou les variables serveur en local).
 // -----------------------------------------------------------------------
 // Idéalement, $host/$db/$user/$pass ne devraient JAMAIS être écrits en dur
 // dans un fichier versionné dans Git (même en local avec un mot de passe
@@ -11,6 +13,9 @@
 // dépôt via .gitignore (voir le fichier .gitignore ajouté à la racine).
 //
 // Pour ce projet pédagogique on reste simple, mais on montre le principe :
+// db.php - Connexion centralisée à la base de données
+require_once __DIR__ . '/env.php';   // remplit les variables GTLA_DB_... depuis .env, s'il existe
+// ... (le reste du fichier est inchangé)
 $host    = getenv('GTLA_DB_HOST') ?: 'localhost';
 $db      = getenv('GTLA_DB_NAME') ?: 'challenge_gtla';
 $user    = getenv('GTLA_DB_USER') ?: 'root';   // À adapter selon environnement de production
