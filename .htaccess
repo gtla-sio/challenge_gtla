@@ -1,0 +1,13 @@
+# =====================================================================
+# Challenge GTLA - protection des fichiers sensibles (Apache 2.4)
+# =====================================================================
+# Pas de liste des fichiers d'un dossier sans page d'accueil
+Options -Indexes
+
+# Configuration, dépendances, documentation, scripts SQL, état du déploiement
+<FilesMatch "^(\.env.*|\.ftp-deploy-sync-state\.json|composer\.(json|lock)|phpunit\.xml|README\.md|.*\.sql)$">
+    Require all denied
+</FilesMatch>
+
+# Dossiers qui ne doivent jamais être servis
+RedirectMatch 404 /(bdd|tests|vendor|docs|journal|\.git|\.github)(/|$)
