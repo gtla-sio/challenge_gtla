@@ -30,7 +30,7 @@
 // renommer '' en 'Repos quotidien', on ne modifie
 // qu'ici : toutes les comparaisons du code utilisent la constante, pas
 // une chaîne recopiée à la main.
-const ACTIVITE_PRISE_DE_SERVICE = 'Prise de service';
+const ACTIVITE_PRISE_DE_SERVICE = 'Prise de service'
 const ACTIVITE_CONDUITE         = 'Conduite';
 const ACTIVITE_CHARGEMENT       = 'Chargement';
 const ACTIVITE_DECHARGEMENT     = 'Déchargement';
