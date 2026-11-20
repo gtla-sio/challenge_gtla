@@ -39,4 +39,4 @@ jobs:
 
       - name: Lancer les tests unitaires
         if: hashFiles('phpunit.xml') != ''
-        run: vendor/bin/phpunit
+        run: php vendor/bin/phpunit
