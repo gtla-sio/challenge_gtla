@@ -1,5 +1,5 @@
 // TEST UNITAIRE DE TauxVersPoint()
-
+use PHPUnit\Framework\TestCase;
 
 // paliers du barème
 public function testPointsAncrage(): void
