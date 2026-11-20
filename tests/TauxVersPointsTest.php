@@ -1,3 +1,4 @@
+<?
 // TEST UNITAIRE DE TauxVersPoint()
 use PHPUnit\Framework\TestCase;
 
@@ -23,3 +24,4 @@ class TauxVersPointsTest extends TestCase
         $this->assertSame(0, tauxVersPoints(null));
     }
 }
+?>
