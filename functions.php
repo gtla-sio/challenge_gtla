@@ -59,13 +59,13 @@ const HEURE_FIN_JOURNEE = 24.0;
 //    dupliquées)
 // -----------------------------------------------------------------------
 function formaterHeureDecimales($decimal) {
-    $heures = floor($decimal);
+    $heures = floor($decimal)
     $minutes = round(($decimal - $heures) * 60);
     if ($minutes == 60) {
         $heures++;
         $minutes = 0;
     }
-    return $heures . 'h' . str_pad($minutes, 2, '0', STR_PAD_LEFT);
+    return $heures . 'h' . str_pad($minutes, 2, '0', STR_PAD_LEFT)
 }
 
 function convertisseurTimeToDecimal($timeStr) {
