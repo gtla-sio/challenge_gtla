@@ -27,8 +27,10 @@ function chargerEnv(string $chemin): void
         $nom = trim($nom);
         $valeur = trim(trim($valeur), "\"'"); // retire les guillemets éventuels
 
-        if ($nom !== '' && getenv($nom) === false) {
-            putenv("$nom=$valeur");
+        if ($nom !== '' && getenv($nom) === false && !isset($_ENV[$nom])) {
+            @putenv("$nom=$valeur");
+            $_ENV[$nom] = $valeur;
+            $_SERVER[$nom] = $valeur;
         }
     }
 }
