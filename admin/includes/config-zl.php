@@ -128,9 +128,9 @@ if (!$config) {
                                 <span class="input-group-text bg-light">€</span>
                             </div>
                         </div>
-                        <!-- 🆕  minimum : durée minimale entre la fin d'une journée et la prise de service du lendemain -->
+                        <!-- 🆕 Repos journalier minimum : durée minimale entre la fin d'une journée et la prise de service du lendemain -->
                         <div class="col-md-4">
-                            <label class="form-label small fw-bold text-dark"> minimum</label>
+                            <label class="form-label small fw-bold text-dark">Repos journalier minimum</label>
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text bg-light"><i class="bi bi-moon-stars"></i></span>
                                 <input type="number" step="0.25" name="repos_journalier_min_h" class="form-control fw-bold text-center" value="<?= htmlspecialchars($config['repos_journalier_min_h'] ?? '9.00') ?>" required min="0">

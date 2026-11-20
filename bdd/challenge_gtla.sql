@@ -841,6 +841,7 @@ CREATE TABLE `zl_lignes_activite` (
   `ordre_chronologique` int(11) NOT NULL,
   `date_activite` date NOT NULL,
   `horaire_debut` decimal(4,2) NOT NULL,
+  `type_activite` enum('Prise de service','Conduite','Chargement','Déchargement','Pause','Repos journalier','Fin de service') NOT NULL,
   `type_activite` enum('Prise de service','Conduite','Chargement','Déchargement','Pause','','Fin de service') NOT NULL,
   `km_parcouru` int(11) DEFAULT 0,
   `duree_repos_h` decimal(4,2) DEFAULT NULL,

@@ -9,8 +9,8 @@ $energies = $pdo->query("SELECT * FROM ref_energies ORDER BY libelle ASC")->fetc
 
 $edit_energie = null;
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM ref_energies WHERE id_energie = :id_energie");
-    $stmt->execute([':id_energie' => intval($_GET['edit'])]);
+    $stmt = $pdo->prepare("SELECT * FROM ref_energies WHERE id_energie = ?");
+    $stmt->execute([intval($_GET['edit'])]);
     $edit_energie = $stmt->fetch();
 }
 ?>

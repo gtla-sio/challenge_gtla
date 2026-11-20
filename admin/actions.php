@@ -1,782 +1,768 @@
 <?php
 session_start();
-require_once '../db.php';
-require_once '../functions.php';
-
-// Sécurité d'accès globale
-if (!isset($_SESSION['admin_user_id']) || $_SESSION['admin_role'] !== 'administrateur') {
-    die("Accès refusé.");
-}
+require_once 'db.php';
+require_once 'functions.php';
+// 🔒 Les fonctions convertisseurTimeToDecimal() / recalculerFeuille() ne
+// sont plus dupliquées : convertisseurTimeToDecimal() vient de
+// functions.php. recalculerFeuille() reste ici car c'est vraiment une
+// fonction propre au traitement des actions (pas partagée avec index.php).
 
 // -----------------------------------------------------------------------
-// 🔒 CORRECTION SÉCURITÉ n°11 : toutes les actions de ce fichier modifient
-// des données (y compris les suppressions) -> on exige désormais POST
-// pour absolument tout, et plus seulement pour les formulaires de
-// sauvegarde.
+// 🔒 CORRECTION SÉCURITÉ n°4 : authentification obligatoire
 // -----------------------------------------------------------------------
-// AVANT : les liens de suppression ("delete_equipe", "delete_lycee"...)
-// étaient de simples liens <a href="actions.php?action=delete_..."> donc
-// des requêtes GET. Or la vérification du jeton CSRF ci-dessous n'était
-// faite QUE "if ($_SERVER['REQUEST_METHOD'] === 'POST')" : un lien GET
-// passait donc au travers de la protection CSRF, alors même que le
-// mécanisme existait dans le projet ! (Toujours vérifier qu'une
-// protection est bien appliquée PARTOUT où elle est nécessaire, pas
-// seulement là où c'était le plus simple à coder.)
-// Toutes les vues (equipes.php, lycees.php, zones.php, vehicules.php,
-// ot-zl.php, utilisateurs.php) ont été mises à jour pour envoyer les
-// suppressions via un <form method="POST"> avec le jeton CSRF, comme les
-// formulaires de sauvegarde.
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    http_response_code(405);
-    die("Méthode non autorisée : cette action doit être déclenchée via un formulaire (POST).");
+// AVANT : ce fichier lisait $_SESSION['team_id'] sans jamais vérifier
+// qu'il existait réellement avant de l'utiliser. Un visiteur non connecté
+// qui appelait directement actions.php pouvait provoquer des erreurs PHP
+// (notice "undefined array key"), voire, selon la configuration du
+// serveur, révéler des informations de débogage.
+if (!isset($_SESSION['team_id'])) {
+    http_response_code(403);
+    die("Accès refusé : vous devez être connecté.");
 }
-verifierCsrfToken($_POST['csrf_token'] ?? null);
+$id_equipe = (int) $_SESSION['team_id'];
 
-$action = $_POST['action'] ?? ($_GET['action'] ?? '');
-$status = 'success';
-$msg = '';
-$redirect = './';
+// -----------------------------------------------------------------------
+// 🔒 CORRECTION SÉCURITÉ n°5 : vérification systématique du jeton CSRF
+// -----------------------------------------------------------------------
+// Toute requête qui MODIFIE des données (POST, mais aussi la suppression
+// qui est repassée en POST ci-dessous, voir correction n°7) doit prouver
+// qu'elle a été initiée depuis notre propre formulaire, via le jeton CSRF
+// stocké en session. On centralise cette vérification tout en haut.
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    verifierCsrfToken($_POST['csrf_token'] ?? null);
+}
 
 /**
- * 🔒 CORRECTION SÉCURITÉ n°12 : suppression des mots de passe par défaut
- * codés en dur ('Equipe2026!', 'ProfGTLA2026!').
- * -----------------------------------------------------------------------
- * AVANT : si l'admin oubliait de saisir un mot de passe à la création
- * d'un compte, un mot de passe FIXE et VISIBLE DANS LE CODE SOURCE (donc
- * dans Git) était utilisé pour tout le monde. N'importe qui ayant accès
- * au dépôt connaissait alors un mot de passe valide pour tous les
- * comptes créés "par erreur" sans mot de passe.
- * MAINTENANT : si le champ est vide, on génère un mot de passe aléatoire
- * fort à usage unique, et on l'affiche UNE SEULE FOIS à l'administrateur
- * dans le message de confirmation, à charge pour lui de le transmettre à
- * l'équipe/l'utilisateur concerné (qui devra le changer).
+ * Recalcule toute la feuille d'un véhicule : ordre des lignes, horaires,
+ * cumuls de conduite/service, ET (🆕) les s.
+ *
+ * 🆕  AUTOMATIQUE : le repos n'est plus saisi par l'équipe.
+ * Pour chaque jour D qui a une prise de service ET dont le lendemain
+ * (D+1) a une prise de service :
+ *     repos(D) = (24 h + heure de prise de service de D+1) − heure de fin de D
+ * Une ligne "" est ajoutée en dernière ligne du jour D.
+ * Aucun repos n'est créé : pour le dernier jour du challenge, ni si le
+ * lendemain n'a pas de prise de service. Les repos sont supprimés puis
+ * recréés à chaque recalcul : ils sont donc toujours à jour, quelle que
+ * soit la modification (prise de service du lendemain, activité du jour...).
+ *
+ * Retourne la liste des repos calculés < minimum (paramètre
+ * repos_journalier_min_h). Si $dates_controlees est fourni, seuls les repos
+ * des jours listés sont retournés (voir executerAvecControleRepos()), pour
+ * qu'une saisie ne soit pas bloquée par un défaut ancien sans rapport.
+ *
+ * 🆕 FIN DE JOURNÉE : les activités qui dépassent HEURE_FIN_JOURNEE (minuit)
+ * sont aussi signalées, avec 'nature' => 'fin_journee' (les repos trop
+ * courts ont 'nature' => 'repos'). Une écriture qui fait déborder une
+ * activité après 23h59 est ainsi refusée comme un repos insuffisant.
  */
-function genererMotDePasseAleatoire(int $longueur = 12): string {
-    // base64 lisible, sans caractères ambigus type "=" en fin de chaîne
-    return substr(str_replace(['+', '/', '='], '', base64_encode(random_bytes(16))), 0, $longueur);
-}
-
-switch ($action) {
-    // ==========================================
-    // CRUD UTILISATEURS
-    // ==========================================
-    case 'save_utilisateur':
-        $id = !empty($_POST['id_utilisateur']) ? intval($_POST['id_utilisateur']) : null;
-        $identifiant = trim($_POST['identifiant']);
-        $role = $_POST['role'];
-        $id_lycee = !empty($_POST['id_lycee']) ? intval($_POST['id_lycee']) : null;
-        $redirect = './?section=utilisateurs';
-
-        if ($id) { // Modification
-            if (!empty($_POST['mot_de_passe'])) {
-                $mdp = password_hash($_POST['mot_de_passe'], PASSWORD_BCRYPT);
-                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant = :identifiant, role = :role, id_lycee = :id_lycee, mot_de_passe = :mot_de_passe WHERE id_utilisateur = :id_utilisateur");
-                $stmt->execute([
-                    ':identifiant'    => $identifiant,
-                    ':role'           => $role,
-                    ':id_lycee'       => $id_lycee,
-                    ':mot_de_passe'   => $mdp,
-                    ':id_utilisateur' => $id
-                ]);
-            } else {
-                $stmt = $pdo->prepare("UPDATE utilisateurs SET identifiant = :identifiant, role = :role, id_lycee = :id_lycee WHERE id_utilisateur = :id_utilisateur");
-                $stmt->execute([
-                    ':identifiant'    => $identifiant,
-                    ':role'           => $role,
-                    ':id_lycee'       => $id_lycee,
-                    ':id_utilisateur' => $id
-                ]);
-            }
-            $msg = "Utilisateur mis à jour avec succès.";
-        } else { // Création
-            if (!empty($_POST['mot_de_passe'])) {
-                $mdp_clair = $_POST['mot_de_passe'];
-                $msg = "Utilisateur créé avec succès.";
-            } else {
-                $mdp_clair = genererMotDePasseAleatoire();
-                $msg = "Utilisateur créé avec succès. Mot de passe généré : \"$mdp_clair\" (notez-le, il ne sera plus affiché).";
-            }
-            $mdp = password_hash($mdp_clair, PASSWORD_BCRYPT);
-            $stmt = $pdo->prepare("INSERT INTO utilisateurs (identifiant, mot_de_passe, role, id_lycee) VALUES (:identifiant, :mot_de_passe, :role, :id_lycee)");
-            $stmt->execute([
-                ':identifiant'  => $identifiant,
-                ':mot_de_passe' => $mdp,
-                ':role'         => $role,
-                ':id_lycee'     => $id_lycee
-            ]);
-        }
-        break;
-
-    case 'delete_utilisateur':
-        $id = intval($_POST['id'] ?? 0);
-
-        // 🔒 Garde-fou supplémentaire : un administrateur ne doit pas
-        // pouvoir supprimer son propre compte par erreur (risque de
-        // "se verrouiller dehors" de la console d'administration).
-        if ($id === (int) $_SESSION['admin_user_id']) {
-            $status = 'error';
-            $msg = "Vous ne pouvez pas supprimer votre propre compte.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM utilisateurs WHERE id_utilisateur = :id_utilisateur");
-            $stmt->execute([':id_utilisateur' => $id]);
-            $msg = "Utilisateur supprimé.";
-        }
-        $redirect = './?section=utilisateurs';
-        break;
-
-    // ==========================================
-    // CRUD LYCÉES
-    // ==========================================
-    case 'save_lycee':
-        $id = !empty($_POST['id_lycee']) ? intval($_POST['id_lycee']) : null;
-        $nom_lycee = trim($_POST['nom_lycee']);
-        $ville = trim($_POST['ville']);
-        $redirect = './?section=lycees';
-
-        if ($id) {
-            $stmt = $pdo->prepare("UPDATE lycees SET nom_lycee = :nom_lycee, ville = :ville WHERE id_lycee = :id_lycee");
-            $stmt->execute([
-                ':nom_lycee' => $nom_lycee,
-                ':ville'     => $ville,
-                ':id_lycee'  => $id
-            ]);
-            $msg = "Établissement mis à jour.";
-        } else {
-            $stmt = $pdo->prepare("INSERT INTO lycees (nom_lycee, ville) VALUES (:nom_lycee, :ville)");
-            $stmt->execute([
-                ':nom_lycee' => $nom_lycee,
-                ':ville'     => $ville
-            ]);
-            $msg = "Établissement ajouté.";
-        }
-        break;
-
-    case 'delete_lycee':
-        $id = intval($_POST['id'] ?? 0);
-
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM equipes WHERE id_lycee = :id_lycee");
-        $stmt_check->execute([':id_lycee' => $id]);
-        $nb_equipes = $stmt_check->fetchColumn();
-
-        if ($nb_equipes > 0) {
-            $status = 'error';
-            $msg = "Impossible de supprimer ce lycée : il est rattaché à $nb_equipes équipe(s). Veuillez d'abord supprimer ou déplacer ces équipes.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM lycees WHERE id_lycee = :id_lycee");
-            $stmt->execute([':id_lycee' => $id]);
-            $status = 'success';
-            $msg = "Lycée supprimé.";
-        }
-
-        $redirect = './?section=lycees';
-        break;
-
-    // 🗑️ CRUD ZONES retiré : zl_zones a été supprimée de la base
-    // (voir migration_suppression_zones_dept_adresses.sql).
-
-    // ==========================================
-    // CRUD ÉQUIPES ÉLÈVES
-    // ==========================================
-    case 'save_equipe':
-        $id = !empty($_POST['id_equipe']) ? intval($_POST['id_equipe']) : null;
-        $nom_equipe = trim($_POST['nom_equipe']);
-        $login = trim($_POST['login_equipe']);
-        $id_lycee = intval($_POST['id_lycee']);
-        // 🗑️ id_zone retiré (voir migration_suppression_zones_dept_adresses.sql)
-
-        $redirect = './?section=equipes';
-
-        if ($id) {
-            if (!empty($_POST['mot_de_passe'])) {
-                $mdp = password_hash($_POST['mot_de_passe'], PASSWORD_BCRYPT);
-                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe = :nom_equipe, login_equipe = :login_equipe, mot_de_passe = :mot_de_passe, id_lycee = :id_lycee WHERE id_equipe = :id_equipe");
-                $stmt->execute([
-                    ':nom_equipe'   => $nom_equipe,
-                    ':login_equipe' => $login,
-                    ':mot_de_passe' => $mdp,
-                    ':id_lycee'     => $id_lycee,
-                    ':id_equipe'    => $id
-                ]);
-            } else {
-                $stmt = $pdo->prepare("UPDATE equipes SET nom_equipe = :nom_equipe, login_equipe = :login_equipe, id_lycee = :id_lycee WHERE id_equipe = :id_equipe");
-                $stmt->execute([
-                    ':nom_equipe'   => $nom_equipe,
-                    ':login_equipe' => $login,
-                    ':id_lycee'     => $id_lycee,
-                    ':id_equipe'    => $id
-                ]);
-            }
-            $msg = "Équipe modifiée avec succès.";
-        } else {
-            // 🔒 Voir la correction n°12 plus haut : plus de mot de passe
-            // fixe codé en dur.
-            if (!empty($_POST['mot_de_passe'])) {
-                $mdp_clair = $_POST['mot_de_passe'];
-                $msg = "Équipe ajoutée avec succès.";
-            } else {
-                $mdp_clair = genererMotDePasseAleatoire();
-                $msg = "Équipe ajoutée avec succès. Mot de passe généré : \"$mdp_clair\" (notez-le, il ne sera plus affiché).";
-            }
-            $mdp = password_hash($mdp_clair, PASSWORD_BCRYPT);
-            $stmt = $pdo->prepare("INSERT INTO equipes (nom_equipe, login_equipe, mot_de_passe, id_lycee) VALUES (:nom_equipe, :login_equipe, :mot_de_passe, :id_lycee)");
-            $stmt->execute([
-                ':nom_equipe'   => $nom_equipe,
-                ':login_equipe' => $login,
-                ':mot_de_passe' => $mdp,
-                ':id_lycee'     => $id_lycee
-            ]);
-        }
-        break;
-
-    case 'delete_equipe':
-        $id = intval($_POST['id'] ?? 0);
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_equipe = :id_equipe");
-        $stmt_check->execute([':id_equipe' => $id]);
-
-        if ($stmt_check->fetchColumn() > 0) {
-            $status = 'error';
-            $msg = "Impossible de supprimer cette équipe : elle possède des feuilles de route actives.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM equipes WHERE id_equipe = :id_equipe");
-            $stmt->execute([':id_equipe' => $id]);
-            $msg = "Équipe supprimée.";
-        }
-        $redirect = './?section=equipes';
-        break;
-
-    // ==========================================
-    // CRUD ORDRES DE TRANSPORT (zl_ordres_transport)
-    // ==========================================
-    case 'save_ot':
-        $id = !empty($_POST['id_ot']) ? intval($_POST['id_ot']) : null;
-        $num_ot = trim($_POST['numero_ot']);
-        $expediteur = trim($_POST['expediteur']);
-        // 🗑️➡️🆕 Adresse éclatée en 3 champs (rue / CP / ville), remplace
-        // l'ancien champ unique "adresse_expediteur" en texte libre — voir
-        // migration_suppression_zones_dept_adresses.sql
-        $rue_exp = trim($_POST['rue_adresse_expediteur'] ?? '');
-        $cp_exp = trim($_POST['cp_adresse_expediteur'] ?? '');
-        $ville_exp = trim($_POST['ville_adresse_expediteur'] ?? '');
-        $destinataire = trim($_POST['destinataire']);
-        $rue_dest = trim($_POST['rue_adresse_destinataire'] ?? '');
-        $cp_dest = trim($_POST['cp_adresse_destinataire'] ?? '');
-        $ville_dest = trim($_POST['ville_adresse_destinataire'] ?? '');
-        $nb_supports = intval($_POST['nb_supports']);
-        $type_supports = trim($_POST['id_type_support']);
-        $pbt = floatval($_POST['pbt']);
-        $ca = floatval($_POST['ca']);
-        $id_equipe = !empty($_POST['id_equipe']) ? intval($_POST['id_equipe']) : null;
-        // 🗑️ id_zone retiré (voir migration_suppression_zones_dept_adresses.sql)
-        // Le département n'est pas saisi : il est déduit du code postal
-        // (voir sqlDepartementDepuisCp() dans functions.php).
-
-        $redirect = './?section=ot-zl';
-
-        if ($id) {
-            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = :numero_ot AND id_ot != :id_ot");
-            $stmt_check->execute([
-                ':numero_ot' => $num_ot,
-                ':id_ot'     => $id
-            ]);
-        } else {
-            $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_ordres_transport WHERE numero_ot = :numero_ot");
-            $stmt_check->execute([':numero_ot' => $num_ot]);
-        }
-
-        if ($stmt_check->fetchColumn() > 0) {
-            $status = 'error';
-            $msg = "Erreur : Un ordre de transport avec le numéro '$num_ot' existe déjà. Veuillez utiliser un numéro unique.";
-        } else {
-            if ($id) {
-                $stmt = $pdo->prepare("UPDATE zl_ordres_transport SET numero_ot = :numero_ot, expediteur = :expediteur, rue_adresse_expediteur = :rue_adresse_expediteur, cp_adresse_expediteur = :cp_adresse_expediteur, ville_adresse_expediteur = :ville_adresse_expediteur, destinataire = :destinataire, rue_adresse_destinataire = :rue_adresse_destinataire, cp_adresse_destinataire = :cp_adresse_destinataire, ville_adresse_destinataire = :ville_adresse_destinataire, nb_supports = :nb_supports, id_type_support = :id_type_support, pbt = :pbt, ca = :ca, id_equipe = :id_equipe WHERE id_ot = :id_ot");
-                $stmt->execute([
-                    ':numero_ot'                => $num_ot,
-                    ':expediteur'               => $expediteur,
-                    ':rue_adresse_expediteur'   => $rue_exp,
-                    ':cp_adresse_expediteur'    => $cp_exp,
-                    ':ville_adresse_expediteur' => $ville_exp,
-                    ':destinataire'             => $destinataire,
-                    ':rue_adresse_destinataire' => $rue_dest,
-                    ':cp_adresse_destinataire'  => $cp_dest,
-                    ':ville_adresse_destinataire'=> $ville_dest,
-                    ':nb_supports'              => $nb_supports,
-                    ':id_type_support'          => $type_supports,
-                    ':pbt'                      => $pbt,
-                    ':ca'                       => $ca,
-                    ':id_equipe'                => $id_equipe,
-                    ':id_ot'                    => $id
-                ]);
-                $msg = "Ordre de Transport mis à jour avec succès.";
-            } else {
-                $stmt = $pdo->prepare("INSERT INTO zl_ordres_transport (numero_ot, expediteur, rue_adresse_expediteur, cp_adresse_expediteur, ville_adresse_expediteur, destinataire, rue_adresse_destinataire, cp_adresse_destinataire, ville_adresse_destinataire, nb_supports, id_type_support, pbt, ca, id_equipe) VALUES (:numero_ot, :expediteur, :rue_adresse_expediteur, :cp_adresse_expediteur, :ville_adresse_expediteur, :destinataire, :rue_adresse_destinataire, :cp_adresse_destinataire, :ville_adresse_destinataire, :nb_supports, :id_type_support, :pbt, :ca, :id_equipe)");
-                $stmt->execute([
-                    ':numero_ot'                => $num_ot,
-                    ':expediteur'               => $expediteur,
-                    ':rue_adresse_expediteur'   => $rue_exp,
-                    ':cp_adresse_expediteur'    => $cp_exp,
-                    ':ville_adresse_expediteur' => $ville_exp,
-                    ':destinataire'             => $destinataire,
-                    ':rue_adresse_destinataire' => $rue_dest,
-                    ':cp_adresse_destinataire'  => $cp_dest,
-                    ':ville_adresse_destinataire'=> $ville_dest,
-                    ':nb_supports'              => $nb_supports,
-                    ':id_type_support'          => $type_supports,
-                    ':pbt'                      => $pbt,
-                    ':ca'                       => $ca,
-                    ':id_equipe'                => $id_equipe
-                ]);
-                $msg = "Nouvel Ordre de Transport ajouté avec succès.";
-            }
-        }
-        break;
-
-    case 'delete_ot':
-        $id = intval($_POST['id'] ?? 0);
-
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_lignes_activite WHERE id_ot = :id_ot");
-        $stmt_check->execute([':id_ot' => $id]);
-
-        if ($stmt_check->fetchColumn() > 0) {
-            $status = 'error';
-            $msg = "Impossible de supprimer cet Ordre de Transport : il est déjà associé à des lignes d'activité.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM zl_ordres_transport WHERE id_ot = :id_ot");
-            $stmt->execute([':id_ot' => $id]);
-            $status = 'success';
-            $msg = "Ordre de transport supprimé.";
-        }
-
-        $redirect = './?section=ot-zl';
-        break;
-
-    case 'import_ot':
-        // --- IMPORTATION DES ORDRES DE TRANSPORT VIA EXCEL (XLSX) ---
-        if (isset($_POST['importer_ot_xlsx'])) {
-            if (isset($_FILES['fichier_xlsx']) && $_FILES['fichier_xlsx']['error'] === UPLOAD_ERR_OK) {
-                $fileTmpPath = $_FILES['fichier_xlsx']['tmp_name'];
-                $fileName = $_FILES['fichier_xlsx']['name'];
-                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-                if ($fileExtension === 'xlsx') {
-                    $insertedcount = 0;
-                    $updatedcount = 0;
-
-                    $zip = new ZipArchive;
-                    if ($zip->open($fileTmpPath) === TRUE) {
-                        $sharedStringsXML = $zip->getFromName('xl/sharedStrings.xml');
-                        $sheetXML = $zip->getFromName('xl/worksheets/sheet1.xml');
-                        $zip->close();
-
-                        if ($sheetXML) {
-                            $strings = [];
-                            if ($sharedStringsXML) {
-                                // 🔒 CORRECTION SÉCURITÉ n°13 : désactivation des
-                                // entités externes XML (anti-XXE).
-                                // -----------------------------------------------
-                                // simplexml_load_string() peut, sur certaines
-                                // configurations PHP (notamment PHP < 8.0),
-                                // résoudre des "entités externes" déclarées dans
-                                // le XML fourni par l'utilisateur, ce qui permet
-                                // de lire des fichiers du serveur ou de faire des
-                                // requêtes réseau depuis le serveur (attaque XXE
-                                // - XML External Entity). Comme ce fichier est
-                                // fourni par un utilisateur (upload Excel), on
-                                // désactive explicitement le chargement des
-                                // entités externes avant de parser, par prudence
-                                // et par bonne pratique (PHP >= 8.0 désactive déjà
-                                // le chargement des entités externes par défaut,
-                                // mais on ne s'appuie pas uniquement là-dessus).
-                                $sxml = simplexml_load_string($sharedStringsXML);
-                                foreach ($sxml->si as $val) {
-                                    $strings[] = (string)$val->t;
-                                }
-                            }
-
-                            $xml = simplexml_load_string($sheetXML);
-                            $rows = [];
-
-                            foreach ($xml->sheetData->row as $row) {
-                                $rowData = [];
-                                foreach ($row->c as $cell) {
-                                    $val = "";
-                                    $v = (string)$cell->v;
-
-                                    if (isset($cell['t']) && (string)$cell['t'] == 's') {
-                                        $val = $strings[intval($v)] ?? '';
-                                    } else {
-                                        $val = $v;
-                                    }
-                                    $rowData[] = trim($val);
-                                }
-                                $rows[] = $rowData;
-                            }
-
-                            // 🆕 Colonnes zone et département retirées (voir
-                            // migration_suppression_zones_dept_adresses.sql). Les
-                            // adresses sont désormais importées en 3 colonnes
-                            // chacune (rue / CP / ville) au lieu d'une seule en
-                            // texte libre. Voir le modèle à jour
-                            // (import/modele_import_ot.xlsx) pour l'ordre exact.
-                            $sql = "INSERT INTO zl_ordres_transport
-                                    (numero_ot, expediteur, rue_adresse_expediteur, cp_adresse_expediteur, ville_adresse_expediteur,
-                                     destinataire, rue_adresse_destinataire, cp_adresse_destinataire, ville_adresse_destinataire,
-                                     nb_supports, id_type_support, pbt, ca, id_equipe)
-                                    VALUES (:numero_ot, :expediteur, :rue_adresse_expediteur, :cp_adresse_expediteur, :ville_adresse_expediteur,
-                                            :destinataire, :rue_adresse_destinataire, :cp_adresse_destinataire, :ville_adresse_destinataire,
-                                            :nb_supports, :id_type_support, :pbt, :ca, :id_equipe)
-                                    ON DUPLICATE KEY UPDATE
-                                    expediteur = VALUES(expediteur),
-                                    rue_adresse_expediteur = VALUES(rue_adresse_expediteur),
-                                    cp_adresse_expediteur = VALUES(cp_adresse_expediteur),
-                                    ville_adresse_expediteur = VALUES(ville_adresse_expediteur),
-                                    destinataire = VALUES(destinataire),
-                                    rue_adresse_destinataire = VALUES(rue_adresse_destinataire),
-                                    cp_adresse_destinataire = VALUES(cp_adresse_destinataire),
-                                    ville_adresse_destinataire = VALUES(ville_adresse_destinataire),
-                                    nb_supports = VALUES(nb_supports),
-                                    id_type_support = VALUES(id_type_support),
-                                    pbt = VALUES(pbt),
-                                    ca = VALUES(ca),
-                                    id_equipe = VALUES(id_equipe)";
-
-                            $stmt = $pdo->prepare($sql);
-                            $isFirstRow = true;
-
-                            foreach ($rows as $data) {
-                                if ($isFirstRow) {
-                                    $isFirstRow = false;
-                                    continue;
-                                }
-
-                                if (empty($data) || count($data) < 2) {
-                                    continue;
-                                }
-
-                                $col_ot = (isset($data[1]) && is_numeric($data[1])) ? 1 : 0;
-                                $offset = ($col_ot === 1) ? 1 : 0;
-
-                                $numero_ot = trim($data[$offset + 0] ?? '');
-                                if (empty($numero_ot)) continue;
-
-                                $expediteur    = trim($data[$offset + 1] ?? '');
-                                $rue_exp       = trim($data[$offset + 2] ?? '');
-                                $cp_exp        = trim($data[$offset + 3] ?? '');
-                                $ville_exp     = trim($data[$offset + 4] ?? '');
-
-                                $destinataire  = trim($data[$offset + 5] ?? '');
-                                $rue_dest      = trim($data[$offset + 6] ?? '');
-                                $cp_dest       = trim($data[$offset + 7] ?? '');
-                                $ville_dest    = trim($data[$offset + 8] ?? '');
-
-                                $nb_supports   = intval($data[$offset + 9] ?? 0);
-
-                                $type_support_brut    = strtolower(trim($data[$offset + 10] ?? ''));
-                                $id_type_support      = 1;
-                                if (str_contains($type_support_brut, 'iso')) {
-                                    $id_type_support = 2;
-                                } elseif (str_contains($type_support_brut, 'europe') || str_contains($type_support_brut, 'eur')) {
-                                    $id_type_support = 1;
-                                } else {
-                                    $id_type_support = intval($data[$offset + 10]) > 0 ? intval($data[$offset + 10]) : 1;
-                                }
-
-                                $pbt = floatval(str_replace(',', '.', $data[$offset + 11] ?? 0));
-                                $ca  = floatval(str_replace(',', '.', $data[$offset + 12] ?? 0));
-
-                                $equipe_brute = trim($data[$offset + 13] ?? '');
-                                $id_equipe = null;
-
-                                if (!empty($equipe_brute)) {
-                                    if (is_numeric($equipe_brute)) {
-                                        $stmtCheckEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE id_equipe = :id_equipe LIMIT 1");
-                                        $stmtCheckEq->execute([':id_equipe' => intval($equipe_brute)]);
-                                        if ($e_row = $stmtCheckEq->fetch()) {
-                                            $id_equipe = $e_row['id_equipe'];
-                                        }
-                                    } else {
-                                        $stmtEq = $pdo->prepare("SELECT id_equipe FROM equipes WHERE nom_equipe = :nom_equipe OR login_equipe = :login_equipe LIMIT 1");
-                                        $stmtEq->execute([
-                                            ':nom_equipe'   => $equipe_brute,
-                                            ':login_equipe' => $equipe_brute
-                                        ]);
-                                        if ($e_row = $stmtEq->fetch()) {
-                                            $id_equipe = $e_row['id_equipe'];
-                                        }
-                                    }
-                                }
-
-                                $stmtCheck = $pdo->prepare("SELECT id_ot FROM zl_ordres_transport WHERE numero_ot = :numero_ot");
-                                $stmtCheck->execute([':numero_ot' => $numero_ot]);
-                                $exists = $stmtCheck->fetch();
-
-                                $stmt->execute([
-                                    ':numero_ot'                 => $numero_ot,
-                                    ':expediteur'                => $expediteur,
-                                    ':rue_adresse_expediteur'    => $rue_exp,
-                                    ':cp_adresse_expediteur'     => $cp_exp,
-                                    ':ville_adresse_expediteur'  => $ville_exp,
-                                    ':destinataire'              => $destinataire,
-                                    ':rue_adresse_destinataire'  => $rue_dest,
-                                    ':cp_adresse_destinataire'   => $cp_dest,
-                                    ':ville_adresse_destinataire' => $ville_dest,
-                                    ':nb_supports'               => $nb_supports,
-                                    ':id_type_support'           => $id_type_support,
-                                    ':pbt'                       => $pbt,
-                                    ':ca'                        => $ca,
-                                    ':id_equipe'                 => $id_equipe
-                                ]);
-
-                                if ($exists) {
-                                    $updatedcount++;
-                                } else {
-                                    $insertedcount++;
-                                }
-                            }
-
-                            $status = 'success';
-                            $msg = "Importation Excel réussie : $insertedcount OT ajoutés, $updatedcount OT mis à jour.";
-                        } else {
-                            $status = 'error';
-                            $msg = "Structure du fichier Excel invalide.";
-                        }
-                    } else {
-                        $status = 'error';
-                        $msg = "Impossible de lire le fichier Excel (archive ZIP corrompue).";
-                    }
-                } else {
-                    $status = 'error';
-                    $msg = "Format de fichier non valide. Veuillez importer un fichier Excel au format .xlsx";
-                }
-            } else {
-                $status = 'error';
-                $msg = "Aucun fichier sélectionné ou erreur de transfert.";
-            }
-        }
-        $redirect = './?section=ot-zl';
-        break;
-
-    // ==========================================
-    // CRUD VÉHICULES ZL
-    // ==========================================
-    case 'save_vehicule':
-        $id = !empty($_POST['id_vehicule']) ? intval($_POST['id_vehicule']) : null;
-        $libelle = trim($_POST['libelle']);
-        $id_type = intval($_POST['id_type']);
-        $id_carrosserie = intval($_POST['id_carrosserie']);
-        // 🆕 Énergie du véhicule (détermine son coût au km) — désormais
-        // OBLIGATOIRE (validée aussi côté serveur, pas seulement via
-        // l'attribut HTML "required" qui peut être contourné).
-        $id_energie = !empty($_POST['id_energie']) ? intval($_POST['id_energie']) : null;
-        $redirect = './?section=vehicules';
-
-        if (!$id_energie) {
-            $status = 'error';
-            $msg = "L'énergie du véhicule est obligatoire.";
-            break;
-        }
-
-        if ($id) {
-            $stmt = $pdo->prepare("UPDATE zl_vehicules SET libelle = :libelle, id_type = :id_type, id_carrosserie = :id_carrosserie, id_energie = :id_energie WHERE id_vehicule = :id_vehicule");
-            $stmt->execute([
-                ':libelle'        => $libelle,
-                ':id_type'        => $id_type,
-                ':id_carrosserie' => $id_carrosserie,
-                ':id_energie'     => $id_energie,
-                ':id_vehicule'    => $id
-            ]);
-            $msg = "Véhicule mis à jour.";
-        } else {
-            $stmt = $pdo->prepare("INSERT INTO zl_vehicules (libelle, id_type, id_carrosserie, id_energie) VALUES (:libelle, :id_type, :id_carrosserie, :id_energie)");
-            $stmt->execute([
-                ':libelle'        => $libelle,
-                ':id_type'        => $id_type,
-                ':id_carrosserie' => $id_carrosserie,
-                ':id_energie'     => $id_energie
-            ]);
-            $msg = "Véhicule ajouté.";
-        }
-        break;
-
-    // ==========================================
-    // 🆕 CRUD ÉNERGIES (libellé + coût au km)
-    // ==========================================
-    case 'save_energie':
-        $id_energie = !empty($_POST['id_energie']) ? intval($_POST['id_energie']) : null;
-        $libelle = trim($_POST['libelle'] ?? '');
-        $cout_km = round(floatval(str_replace(',', '.', $_POST['cout_km'] ?? 0)), 3);
-        $redirect = './?section=energies';
-
-        if ($libelle === '' || $cout_km < 0) {
-            $status = 'error';
-            $msg = "Valeurs invalides.";
-        } elseif ($id_energie) {
-            $stmt = $pdo->prepare('UPDATE ref_energies SET libelle = :libelle, cout_km = :cout_km WHERE id_energie = :id_energie');
-            $stmt->execute([
-                ':libelle'    => $libelle,
-                ':cout_km'    => $cout_km,
-                ':id_energie' => $id_energie
-            ]);
-            $msg = "Énergie mise à jour.";
-        } else {
-            $stmt = $pdo->prepare('INSERT INTO ref_energies (libelle, cout_km) VALUES (:libelle, :cout_km)');
-            $stmt->execute([
-                ':libelle' => $libelle,
-                ':cout_km' => $cout_km
-            ]);
-            $msg = "Énergie ajoutée.";
-        }
-        break;
-
-    case 'delete_energie':
-        $id_energie = intval($_POST['id'] ?? 0);
-        $redirect = './?section=energies';
-
-        // 🔒 Comme pour les lycées/zones : on bloque la suppression si des
-        // véhicules dépendent encore de cette énergie, plutôt que de
-        // casser leur coût au km (ou violer la contrainte NOT NULL).
-        $stmt_check = $pdo->prepare('SELECT COUNT(*) FROM zl_vehicules WHERE id_energie = :id_energie');
-        $stmt_check->execute([':id_energie' => $id_energie]);
-
-        if ($stmt_check->fetchColumn() > 0) {
-            $status = 'error';
-            $msg = "Impossible de supprimer cette énergie : elle est utilisée par au moins un véhicule.";
-        } else {
-            $stmt = $pdo->prepare('DELETE FROM ref_energies WHERE id_energie = :id_energie');
-            $stmt->execute([':id_energie' => $id_energie]);
-            $msg = "Énergie supprimée.";
-        }
-        break;
-
-    case 'delete_vehicule':
-        $id = intval($_POST['id'] ?? 0);
-
-        $stmt_check = $pdo->prepare("SELECT COUNT(*) FROM zl_feuilles_otea WHERE id_vehicule = :id_vehicule");
-        $stmt_check->execute([':id_vehicule' => $id]);
-
-        if ($stmt_check->fetchColumn() > 0) {
-            $status = 'error';
-            $msg = "Impossible de supprimer ce véhicule : il est utilisé dans des feuilles de route existantes.";
-        } else {
-            $stmt = $pdo->prepare("DELETE FROM zl_vehicules WHERE id_vehicule = :id_vehicule");
-            $stmt->execute([':id_vehicule' => $id]);
-            $msg = "Véhicule supprimé.";
-        }
-
-        $redirect = './?section=vehicules';
-        break;
-
-    // =========================================================================
-    // SAUVEGARDE DE LA CONFIGURATION ZL (zl_config_parametres)
-    // =========================================================================
-    case 'save_config':
-        $id_config                      = intval($_POST['id_config']);
-        $vitesse_moyenne_kmh            = intval($_POST['vitesse_moyenne_kmh']);
-        $temps_chargement_h             = floatval($_POST['temps_chargement_h']);
-        $temps_dechargement_h           = floatval($_POST['temps_dechargement_h']);
-        $temps_pause_h                  = floatval($_POST['temps_pause_h']);
-        // 🆕  minimum (heures) : voir recalculerFeuille() dans actions.php (racine)
-        $repos_journalier_min_h         = max(0, floatval(str_replace(',', '.', $_POST['repos_journalier_min_h'] ?? '9')));
-        $heure_prise_service_defaut     = floatval($_POST['heure_prise_service_defaut']);
-        $date_debut_challenge_zl        = $_POST['date_debut_challenge_zl'];
-        $date_fin_challenge_zl          = !empty($_POST['date_fin_challenge_zl']) ? $_POST['date_fin_challenge_zl'] : null;
-        $penalite_jour_non_roule        = floatval($_POST['penalite_jour_non_roule']);
-        // 🆕 Barème des malus du classement pondéré
-        $malus_infraction_conduite_repos = floatval($_POST['malus_infraction_conduite_repos'] ?? 1);
-        // 🆕 Réintégré (voir migration_rechargement_hors_zone.sql)
-        $malus_rechargement_hors_zone    = floatval($_POST['malus_rechargement_hors_zone'] ?? 50);
-        $date_application               = date('Y-m-d');
-
-        $redirect = './?section=config-zl';
-
-        if ($id_config > 0) {
-            $sql = "UPDATE zl_config_parametres SET
-                        vitesse_moyenne_kmh = :vitesse_moyenne_kmh,
-                        temps_chargement_h = :temps_chargement_h,
-                        temps_dechargement_h = :temps_dechargement_h,
-                        temps_pause_h = :temps_pause_h,
-                        repos_journalier_min_h = :repos_journalier_min_h,
-                        heure_prise_service_defaut = :heure_prise_service_defaut,
-                        date_debut_challenge_zl = :date_debut_challenge_zl,
-                        date_fin_challenge_zl = :date_fin_challenge_zl,
-                        penalite_jour_non_roule = :penalite_jour_non_roule,
-                        malus_infraction_conduite_repos = :malus_infraction_conduite_repos,
-                        malus_rechargement_hors_zone = :malus_rechargement_hors_zone,
-                        date_application = :date_application
-                    WHERE id_config = :id_config";
-
-            $stmt = $pdo->prepare($sql);
-            $stmt->execute([
-                ':vitesse_moyenne_kmh'             => $vitesse_moyenne_kmh,
-                ':temps_chargement_h'              => $temps_chargement_h,
-                ':temps_dechargement_h'            => $temps_dechargement_h,
-                ':temps_pause_h'                   => $temps_pause_h,
-                ':repos_journalier_min_h'          => $repos_journalier_min_h,
-                ':heure_prise_service_defaut'      => $heure_prise_service_defaut,
-                ':date_debut_challenge_zl'         => $date_debut_challenge_zl,
-                ':date_fin_challenge_zl'           => $date_fin_challenge_zl,
-                ':penalite_jour_non_roule'         => $penalite_jour_non_roule,
-                ':malus_infraction_conduite_repos' => $malus_infraction_conduite_repos,
-                ':malus_rechargement_hors_zone'    => $malus_rechargement_hors_zone,
-                ':date_application'                => $date_application,
-                ':id_config'                       => $id_config
-            ]);
-
-            $status = 'success';
-            $msg = "Paramètres globaux ZL mis à jour avec succès.";
-        } else {
-            $status = 'error';
-            $msg = "Erreur lors de la mise à jour des paramètres globaux ZL.";
-        }
-        break;
-
-    // ==========================================
-    // 🆕 DÉPARTEMENTS LIMITROPHES (pénalités géographiques — à venir)
-    // ==========================================
-    case 'add_limitrophe':
-        $code = trim($_POST['code_dept'] ?? '');
-        $code_voisin = trim($_POST['code_dept_limitrophe'] ?? '');
-        $redirect = './?section=departements&dept=' . urlencode($code);
-
-        if ($code === '' || $code_voisin === '' || $code === $code_voisin) {
-            $status = 'error';
-            $msg = "Sélection invalide.";
-        } else {
-            // Relation symétrique : on enregistre les deux sens.
-            // INSERT IGNORE évite une erreur si la relation existe déjà
-            // (clé primaire composite code_dept + code_dept_limitrophe).
-            $stmt = $pdo->prepare('INSERT IGNORE INTO zl_departements_limitrophes (code_dept, code_dept_limitrophe) VALUES (:code_dept, :code_dept_limitrophe)');
-            $stmt->execute([
-                ':code_dept'            => $code,
-                ':code_dept_limitrophe' => $code_voisin
-            ]);
-            $stmt->execute([
-                ':code_dept'            => $code_voisin,
-                ':code_dept_limitrophe' => $code
-            ]);
-            $msg = "Relation de voisinage ajoutée.";
-        }
-        break;
-
-    case 'delete_limitrophe':
-        $code = trim($_POST['code_dept'] ?? '');
-        $code_voisin = trim($_POST['code_dept_limitrophe'] ?? '');
-        $redirect = './?section=departements&dept=' . urlencode($code);
-
-        $stmt = $pdo->prepare('DELETE FROM zl_departements_limitrophes WHERE (code_dept = :code_dept_1 AND code_dept_limitrophe = :code_voisin_1) OR (code_dept = :code_voisin_2 AND code_dept_limitrophe = :code_dept_2)');
-        $stmt->execute([
-            ':code_dept_1'   => $code,
-            ':code_voisin_1' => $code_voisin,
-            ':code_voisin_2' => $code_voisin,
-            ':code_dept_2'   => $code
+function recalculerFeuille($pdo, $id_feuille, ?array $dates_controlees = null): array {
+    $violations = [];
+
+    // 0. Les s sont toujours recalculés : on supprime les
+    //    existants, ils sont réinsérés à l'étape 5.
+    $pdo->prepare("DELETE FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND type_activite = :type_activite")
+        ->execute([
+            ':id_feuille'    => $id_feuille,
+            ':type_activite' => ACTIVITE_REPOS_JOURNALIER
         ]);
-        $msg = "Relation de voisinage supprimée.";
-        break;
 
-    default:
-        $status = 'error';
-        $msg = "Action inconnue.";
-        break;
+    // 1. RÉINDEXATION ROBUSTE
+    // 🆕 Tri par DATE puis par ordre de saisie dans la journée. Avant, le
+    // tri se faisait sur l'ordre de saisie seul : avec la saisie jour par
+    // jour, compléter le jour 1 après avoir commencé le jour 2 mélangeait
+    // les jours et faussait les cumuls et les horaires.
+    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = :id_feuille ORDER BY date_activite ASC, ordre_chronologique ASC, id_ligne ASC");
+    $stmt_get->execute([':id_feuille' => $id_feuille]);
+    $lignes = $stmt_get->fetchAll();
+
+    $i = 1;
+    foreach ($lignes as $ligne) {
+        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = :ordre_chronologique WHERE id_ligne = :id_ligne")
+            ->execute([
+                ':ordre_chronologique' => $i++,
+                ':id_ligne'            => $ligne['id_ligne']
+            ]);
+    }
+
+    // 2. RÉCUPÉRATION DONNÉES ET CONFIG
+    $stmtActivites = $pdo->prepare("SELECT * FROM zl_lignes_activite WHERE id_feuille = :id_feuille ORDER BY ordre_chronologique ASC");
+    $stmtActivites->execute([':id_feuille' => $id_feuille]);
+    $activites = $stmtActivites->fetchAll();
+
+    $stmtConf = $pdo->query("SELECT heure_prise_service_defaut, temps_chargement_h, temps_dechargement_h, temps_pause_h, vitesse_moyenne_kmh, repos_journalier_min_h FROM zl_config_parametres WHERE id_config = 1");
+    $config = $stmtConf->fetch(PDO::FETCH_ASSOC);
+    if (!$config) return [];
+
+    // 3. INITIALISATION DES CUMULS
+    $horaire_courant = floatval($config['heure_prise_service_defaut']);
+    $conduite_continue_cumul = 0.0;
+    $total_conduite_cumul = 0.0;
+    $total_service_cumul = 0.0;
+    $vitesse = floatval($config['vitesse_moyenne_kmh']);
+
+    // Variable pour mémoriser la date de la ligne précédente et détecter le changement de journée
+    $date_precedente = null;
+
+    // 🆕 Pour le repos : heure de prise de service de chaque jour, et état
+    // de fin de chaque jour (heure de fin, OT de la dernière ligne, cumuls)
+    $prises_de_service = [];
+    $fins_de_jour = [];
+
+    // 4. BOUCLE DE CALCUL ET MISE À JOUR
+    foreach ($activites as $l) {
+        $type = $l['type_activite'];
+        $date_actuelle = $l['date_activite'];
+
+        if ($date_precedente !== null && $date_actuelle !== $date_precedente) {
+            $total_conduite_cumul = 0.0;
+            $total_service_cumul = 0.0;
+            $conduite_continue_cumul = 0.0;
+        }
+        $date_precedente = $date_actuelle;
+
+        // A. Gestion de l'horaire de début
+        if ($type === ACTIVITE_PRISE_DE_SERVICE) {
+            $horaire_courant = floatval($l['horaire_debut']);
+            $conduite_continue_cumul = 0.0;
+            $total_conduite_cumul = 0.0;
+            $total_service_cumul = 0.0;
+            $prises_de_service[$date_actuelle] = $horaire_courant;
+        }
+
+        // B. Calcul de la durée de l'activité actuelle
+        $duree = 0.0;
+        if ($type === ACTIVITE_CONDUITE) {
+            $duree = ($vitesse > 0) ? round(floatval($l['km_parcouru']) / $vitesse, 2) : 0;
+        } else {
+            $key_conf = 'temps_' . strtolower(str_replace(['é', 'è', 'ê'], 'e', $type)) . '_h';
+            $duree = floatval($config[$key_conf] ?? 0);
+        }
+
+        // C. Gestion des règles de cumul
+        if ($type === ACTIVITE_CONDUITE) {
+            $conduite_continue_cumul += $duree;
+            $total_conduite_cumul += $duree;
+            $total_service_cumul += $duree;
+        } elseif ($type === ACTIVITE_PAUSE) {
+            $conduite_continue_cumul = 0.0;
+            $total_service_cumul += $duree;
+        } else {
+            if ($type !== ACTIVITE_PRISE_DE_SERVICE && $type !== ACTIVITE_FIN_DE_SERVICE) {
+                $total_service_cumul += $duree;
+            }
+        }
+
+        // D. Mise à jour de la base
+        $sql = "UPDATE zl_lignes_activite SET
+                horaire_debut = :horaire_debut,
+                conduite_continue_cumul = :conduite_continue_cumul,
+                total_conduite_cumul = :total_conduite_cumul,
+                total_service_cumul = :total_service_cumul
+                WHERE id_ligne = :id_ligne";
+
+        $pdo->prepare($sql)->execute([
+            ':horaire_debut'           => $horaire_courant,
+            ':conduite_continue_cumul' => $conduite_continue_cumul,
+            ':total_conduite_cumul'    => $total_conduite_cumul,
+            ':total_service_cumul'     => $total_service_cumul,
+            ':id_ligne'                => $l['id_ligne']
+        ]);
+
+        // 🆕 D bis. Une activité qui dure (conduite, chargement, déchargement,
+        // pause) ne doit pas se terminer après minuit. Le 
+        // n'est pas concerné : il est recréé à l'étape 5 et chevauche
+        // forcément la nuit. La tolérance de 0,005 h absorbe les arrondis
+        // à 2 décimales des durées.
+        $fin_activite = $horaire_courant + $duree;
+        if ($duree > 0 && $type !== ACTIVITE_REPOS_JOURNALIER && $fin_activite > HEURE_FIN_JOURNEE + 0.005
+            && ($dates_controlees === null || in_array($date_actuelle, $dates_controlees, true))) {
+            $violations[] = [
+                'nature' => 'fin_journee',
+                'date'   => $date_actuelle,
+                'type'   => $type,
+                'debut'  => $horaire_courant,
+                'fin'    => $fin_activite,
+            ];
+        }
+
+        // E. Incrémentation pour la ligne suivante
+        $horaire_courant += $duree;
+
+        // 🆕 État de fin de journée (écrasé à chaque ligne : la dernière du jour l'emporte)
+        $fins_de_jour[$date_actuelle] = [
+            'fin'            => $horaire_courant,
+            'id_ot'          => $l['id_ot'],
+            'total_conduite' => $total_conduite_cumul,
+            'total_service'  => $total_service_cumul,
+        ];
+    }
+
+    // 5. 🆕 S AUTOMATIQUES
+    $repos_min = floatval($config['repos_journalier_min_h'] ?? 9);
+    $jours_challenge = getJoursChallenge($pdo);
+    $dernier_jour = end($jours_challenge);
+
+    $stmtRepos = $pdo->prepare(
+        'INSERT INTO zl_lignes_activite
+            (id_feuille, id_ot, ordre_chronologique, date_activite, horaire_debut, type_activite, km_parcouru, duree_repos_h, est_debut_journee,
+             conduite_continue_cumul, total_conduite_cumul, total_service_cumul)
+         VALUES (:id_feuille, :id_ot, 0, :date_activite, :horaire_debut, :type_activite, 0, :duree_repos_h, 0, 0, :total_conduite_cumul, :total_service_cumul)'
+    );
+
+    foreach ($fins_de_jour as $jour => $fj) {
+        if ($jour >= $dernier_jour) continue;                     // dernier jour : pas de lendemain à renseigner
+        if (!isset($prises_de_service[$jour])) continue;          // jour sans prise de service : horaires non fiables
+        $lendemain = date('Y-m-d', strtotime($jour . ' +1 day'));
+        if (!isset($prises_de_service[$lendemain])) continue;     // pas de prise de service le lendemain : pas de repos
+
+        $repos = round(24 + $prises_de_service[$lendemain] - $fj['fin'], 2);
+
+        if ($repos < $repos_min && ($dates_controlees === null || in_array($jour, $dates_controlees, true))) {
+            $violations[] = [
+                'nature'        => 'repos',
+                'date_repos'    => $jour,
+                'lendemain'     => $lendemain,
+                'fin'           => $fj['fin'],
+                'prise_service' => $prises_de_service[$lendemain],
+                'repos'         => $repos,
+                'repos_min'     => $repos_min,
+            ];
+        }
+
+        // La ligne reprend l'OT de la dernière ligne du jour (pas de faux
+        // changement d'OT) et les cumuls du jour, comme les anciens repos saisis.
+        $stmtRepos->execute([
+            ':id_feuille'           => $id_feuille,
+            ':id_ot'                => $fj['id_ot'],
+            ':date_activite'        => $jour,
+            ':horaire_debut'        => $fj['fin'],
+            ':type_activite'        => ACTIVITE_REPOS_JOURNALIER,
+            ':duree_repos_h'        => max(0.0, $repos),
+            ':total_conduite_cumul' => $fj['total_conduite'],
+            ':total_service_cumul'  => $fj['total_service'],
+        ]);
+    }
+
+    // 6. RÉINDEXATION FINALE : le repos est toujours la dernière ligne de son jour
+    $stmt_get = $pdo->prepare("SELECT id_ligne FROM zl_lignes_activite WHERE id_feuille = :id_feuille
+        ORDER BY date_activite ASC, (type_activite = '" . ACTIVITE_REPOS_JOURNALIER . "') ASC, ordre_chronologique ASC, id_ligne ASC");
+    $stmt_get->execute([':id_feuille' => $id_feuille]);
+    $i = 1;
+    foreach ($stmt_get->fetchAll() as $ligne) {
+        $pdo->prepare("UPDATE zl_lignes_activite SET ordre_chronologique = :ordre_chronologique WHERE id_ligne = :id_ligne")
+            ->execute([
+                ':ordre_chronologique' => $i++,
+                ':id_ligne'            => $ligne['id_ligne']
+            ]);
+    }
+
+    return $violations;
 }
 
-header("Location: {$redirect}&status={$status}&msg=" . urlencode($msg));
-exit;
+/**
+ * 🆕 Exécute une écriture (ajout / modification / suppression d'une ligne)
+ * puis recalcule la feuille, le tout dans une transaction : si un repos
+ * journalier calculé passe sous le minimum, l'écriture est ANNULÉE et un
+ * message explicite est retourné (null si tout est bon).
+ *
+ * Seuls les repos du jour de la ligne ($date) et du jour précédent sont
+ * contrôlés : ce sont les seuls que cette écriture peut modifier.
+ *
+ * 🆕 Si $controler_fin_journee est vrai, l'écriture est aussi refusée quand
+ * une activité du jour $date déborde après minuit (voir recalculerFeuille()).
+ * On le désactive pour une suppression : retirer une ligne ne peut
+ * qu'avancer les horaires suivants, et il faut pouvoir corriger une journée
+ * déjà en dépassement (données saisies avant ce contrôle).
+ */
+function executerAvecControleRepos(PDO $pdo, int $id_feuille, string $date, callable $ecriture, bool $controler_fin_journee = true): ?string {
+    $dates_controlees = [$date, date('Y-m-d', strtotime($date . ' -1 day'))];
+
+    $pdo->beginTransaction();
+    try {
+        $ecriture();
+        $violations = recalculerFeuille($pdo, $id_feuille, $dates_controlees);
+
+        // Le dépassement de fin de journée est signalé en premier : c'est la
+        // cause directe de la saisie refusée.
+        foreach ($violations as $v) {
+            if ($controler_fin_journee && $v['nature'] === 'fin_journee' && $v['date'] === $date) {
+                $pdo->rollBack();
+                return messageDepassementJournee($v);
+            }
+        }
+        foreach ($violations as $v) {
+            if ($v['nature'] === 'repos') {
+                $pdo->rollBack();
+                return messageViolationRepos($v);
+            }
+        }
+        $pdo->commit();
+        return null;
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        throw $e;
+    }
+}
+
+// Récupération configuration
+$stmtConfig = $pdo->query('SELECT heure_prise_service_defaut FROM zl_config_parametres WHERE id_config = 1');
+$config = $stmtConfig->fetch();
+$heure_fixe_bdd = $config ? floatval($config['heure_prise_service_defaut']) : 5.00;
+
+$date_debut = $_POST['date_debut_semaine'] ?? '';
+$id_vehicule = $_POST['id_vehicule'] ?? null;
+
+// NOTE : $id_feuille est ici toujours dérivé d'une recherche filtrée par
+// $id_equipe (voir la requête juste en dessous). C'est ce qui garantit
+// que la feuille appartient forcément à l'équipe connectée dès sa
+// création — cette partie du code était déjà correcte.
+if ($id_vehicule && !empty($date_debut)) {
+    $stmt = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea
+                           WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine");
+    $stmt->execute([
+        ':id_equipe'          => $id_equipe,
+        ':id_vehicule'        => $id_vehicule,
+        ':date_debut_semaine' => $date_debut
+    ]);
+    $feuille = $stmt->fetch();
+
+    if ($feuille) {
+        $id_feuille = $feuille['id_feuille'];
+    } else {
+        try {
+            $stmtCreate = $pdo->prepare("INSERT INTO zl_feuilles_otea (id_equipe, id_vehicule, date_debut_semaine) VALUES (:id_equipe, :id_vehicule, :date_debut_semaine)");
+            $stmtCreate->execute([
+                ':id_equipe'          => $id_equipe,
+                ':id_vehicule'        => $id_vehicule,
+                ':date_debut_semaine' => $date_debut
+            ]);
+            $id_feuille = $pdo->lastInsertId();
+        } catch (PDOException $e) {
+            $stmt = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine");
+            $stmt->execute([
+                ':id_equipe'          => $id_equipe,
+                ':id_vehicule'        => $id_vehicule,
+                ':date_debut_semaine' => $date_debut
+            ]);
+            $id_feuille = $stmt->fetchColumn();
+        }
+    }
+}
+
+// -----------------------------------------------------------------------
+// --- SUPPRESSION ---
+// 🔒 CORRECTION SÉCURITÉ n°6 et n°7 (les deux essentielles de la review)
+// -----------------------------------------------------------------------
+// n°6 (IDOR) : on vérifie désormais, via ligneAppartientEquipe(), que la
+//     ligne demandée appartient bien à l'équipe connectée AVANT de faire
+//     quoi que ce soit. Sans ce garde-fou, changer juste l'id_ligne dans
+//     l'URL permettait de supprimer la ligne d'une AUTRE équipe.
+// n°7 (CSRF + méthode HTTP) : la suppression est passée d'un lien <a>
+//     (méthode GET) à un petit formulaire POST protégé par jeton CSRF.
+//     Règle à retenir : une requête GET ne doit JAMAIS avoir d'effet de
+//     bord (elle doit pouvoir être répétée, mise en cache, préchargée par
+//     le navigateur, sans danger). Toute action qui modifie la base doit
+//     être un POST.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'supprimer') {
+    $id_ligne = intval($_POST['id_ligne'] ?? 0);
+    $id_vehicule_redirection = intval($_POST['id_vehicule'] ?? 0);
+    // 🆕 PLANNING PAR JOUR : on renvoie vers le même jour après suppression,
+    // sinon l'équipe retomberait sur l'écran "choisissez une date".
+    $date_jour_redirection = '&date_jour=' . urlencode($_POST['date_jour'] ?? '');
+
+    $id_feuille_recupere = ligneAppartientEquipe($pdo, $id_ligne, $id_equipe);
+
+    if (!$id_feuille_recupere) {
+        // La ligne n'existe pas OU n'appartient pas à l'équipe connectée :
+        // on refuse, sans donner plus de détail (pour ne pas confirmer à
+        // un attaquant qu'un id_ligne particulier existe chez une autre
+        // équipe).
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Action refusée : cette ligne n'existe pas ou ne vous appartient pas."));
+        exit;
+    }
+
+    // 🆕 Le  est calculé automatiquement : il ne se supprime pas.
+    $stmtLigne = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
+    $stmtLigne->execute([':id_ligne' => $id_ligne]);
+    $ligne_a_supprimer = $stmtLigne->fetch();
+
+    if ($ligne_a_supprimer['type_activite'] === ACTIVITE_REPOS_JOURNALIER) {
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Le  est calculé automatiquement : il ne peut pas être supprimé."));
+        exit;
+    }
+
+    $erreur_repos = executerAvecControleRepos($pdo, (int) $id_feuille_recupere, $ligne_a_supprimer['date_activite'], function () use ($pdo, $id_ligne) {
+        $pdo->prepare('DELETE FROM zl_lignes_activite WHERE id_ligne = :id_ligne')->execute([':id_ligne' => $id_ligne]);
+    }, false);
+
+    if ($erreur_repos) {
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Suppression impossible. " . $erreur_repos));
+        exit;
+    }
+
+    header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Evènement supprimé."));
+    exit;
+}
+
+// -----------------------------------------------------------------------
+// 🆕 AFFRÈTEMENT : déclaration (par l'équipe cliente / affréteur)
+// -----------------------------------------------------------------------
+if (isset($_POST['declarer_affretement'])) {
+    $id_ot = intval($_POST['id_ot'] ?? 0);
+    $id_equipe_cible = intval($_POST['id_equipe_cible'] ?? 0);
+    $prix = round(floatval(str_replace(',', '.', $_POST['prix_affretement'] ?? 0)), 2);
+
+    // Vérifications métier, dans l'ordre où un problème doit être signalé
+    // à l'utilisateur :
+    $stmtOt = $pdo->prepare('SELECT id_equipe FROM zl_ordres_transport WHERE id_ot = :id_ot');
+    $stmtOt->execute([':id_ot' => $id_ot]);
+    $ot = $stmtOt->fetch();
+
+    if (!$ot || (int)$ot['id_equipe'] !== $id_equipe) {
+        // 🔒 IDOR : seule l'équipe cliente d'origine de l'OT peut décider
+        // de le sous-traiter — pas n'importe quelle équipe qui devine un id_ot.
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cet OT ne vous appartient pas."));
+        exit;
+    }
+
+    if ($id_equipe_cible === $id_equipe) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Vous ne pouvez pas vous affréter un OT à vous-même."));
+        exit;
+    }
+
+    $stmtCibleExiste = $pdo->prepare('SELECT 1 FROM equipes WHERE id_equipe = :id_equipe');
+    $stmtCibleExiste->execute([':id_equipe' => $id_equipe_cible]);
+    if (!$stmtCibleExiste->fetchColumn()) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Équipe cible invalide."));
+        exit;
+    }
+
+    if ($prix <= 0) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Le prix d'affrètement doit être supérieur à 0."));
+        exit;
+    }
+
+    // On refuse une nouvelle déclaration si un affrètement est déjà actif
+    // (en attente ou déjà accepté) sur cet OT.
+    if (affretementActifPourOt($pdo, $id_ot)) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Un affrètement est déjà en cours ou accepté sur cet OT."));
+        exit;
+    }
+
+    // On refuse aussi si l'équipe a déjà commencé à exploiter cet OT
+    // elle-même (des lignes d'activité existent déjà dessus) : il faut
+    // choisir CAS 1 (exploitation) OU CAS 2 (affrètement), pas les deux.
+    $stmtDejaExploite = $pdo->prepare('SELECT 1 FROM zl_lignes_activite WHERE id_ot = :id_ot LIMIT 1');
+    $stmtDejaExploite->execute([':id_ot' => $id_ot]);
+    if ($stmtDejaExploite->fetchColumn()) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Impossible : cet OT a déjà des activités saisies en exploitation propre."));
+        exit;
+    }
+
+    $stmt = $pdo->prepare(
+        'INSERT INTO zl_affretements (id_ot, id_equipe_affreteur, id_equipe_affrete, prix_affretement, statut)
+         VALUES (:id_ot, :id_equipe_affreteur, :id_equipe_affrete, :prix_affretement, "en_attente")'
+    );
+    $stmt->execute([
+        ':id_ot'               => $id_ot,
+        ':id_equipe_affreteur' => $id_equipe,
+        ':id_equipe_affrete'   => $id_equipe_cible,
+        ':prix_affretement'    => $prix
+    ]);
+
+    header("Location: index.php?section=affretement&status=success&msg=" . urlencode("Proposition d'affrètement envoyée."));
+    exit;
+}
+
+// -----------------------------------------------------------------------
+// 🆕 AFFRÈTEMENT : annulation par le déclarant (l'affréteur), tant que
+// l'autre équipe n'a pas encore répondu
+// -----------------------------------------------------------------------
+if (isset($_POST['annuler_affretement'])) {
+    $id_affretement = intval($_POST['id_affretement'] ?? 0);
+
+    // 🔒 IDOR : seule l'équipe qui a déclaré cet affrètement peut
+    // l'annuler, et uniquement tant qu'il est encore "en_attente" (pas
+    // déjà accepté ou refusé par l'autre équipe — une réponse déjà
+    // donnée ne se "désannule" pas).
+    $stmt = $pdo->prepare(
+        "SELECT id_affretement FROM zl_affretements
+         WHERE id_affretement = :id_affretement AND id_equipe_affreteur = :id_equipe_affreteur AND statut = 'en_attente'"
+    );
+    $stmt->execute([
+        ':id_affretement'      => $id_affretement,
+        ':id_equipe_affreteur' => $id_equipe
+    ]);
+
+    if (!$stmt->fetchColumn()) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition n'existe pas, ne vous appartient pas, ou a déjà reçu une réponse."));
+        exit;
+    }
+
+    $stmtMaj = $pdo->prepare("UPDATE zl_affretements SET statut = 'annulee', date_reponse = NOW() WHERE id_affretement = :id_affretement");
+    $stmtMaj->execute([':id_affretement' => $id_affretement]);
+
+    header("Location: index.php?section=affretement&status=success&msg=" . urlencode("Proposition d'affrètement annulée."));
+    exit;
+}
+
+// -----------------------------------------------------------------------
+// 🆕 AFFRÈTEMENT : réponse (par l'équipe sollicitée / affrétée)
+// -----------------------------------------------------------------------
+if (isset($_POST['repondre_affretement'])) {
+    $id_affretement = intval($_POST['id_affretement'] ?? 0);
+    $reponse = $_POST['reponse'] ?? '';
+
+    if (!in_array($reponse, ['acceptee', 'refusee'], true)) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Réponse invalide."));
+        exit;
+    }
+
+    // 🔒 IDOR : seule l'équipe VISÉE par la proposition peut y répondre,
+    // et uniquement si elle est encore "en_attente" (pas déjà tranchée).
+    $stmt = $pdo->prepare(
+        "SELECT id_affretement FROM zl_affretements
+         WHERE id_affretement = :id_affretement AND id_equipe_affrete = :id_equipe_affrete AND statut = 'en_attente'"
+    );
+    $stmt->execute([
+        ':id_affretement'    => $id_affretement,
+        ':id_equipe_affrete' => $id_equipe
+    ]);
+
+    if (!$stmt->fetchColumn()) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition n'existe pas, ne vous concerne pas, ou a déjà reçu une réponse."));
+        exit;
+    }
+
+    // 🔒 "AND statut = 'en_attente'" dans l'UPDATE : si l'affréteur vient
+    // d'annuler sa proposition entre la vérification ci-dessus et cette
+    // écriture, on ne doit surtout pas écraser le statut 'annulee'.
+    // rowCount() nous dit si la mise à jour a réellement eu lieu.
+    $stmtMaj = $pdo->prepare(
+        "UPDATE zl_affretements SET statut = :statut, date_reponse = NOW()
+         WHERE id_affretement = :id_affretement AND statut = 'en_attente'"
+    );
+    $stmtMaj->execute([
+        ':statut'         => $reponse,
+        ':id_affretement' => $id_affretement
+    ]);
+
+    if ($stmtMaj->rowCount() === 0) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Cette proposition vient d'être annulée par l'équipe demandeuse."));
+        exit;
+    }
+
+    $msg = ($reponse === 'acceptee')
+        ? "Affrètement accepté : l'OT apparaît désormais dans votre planning véhicules."
+        : "Affrètement refusé.";
+    header("Location: index.php?section=affretement&status=success&msg=" . urlencode($msg));
+    exit;
+}
+
+// -----------------------------------------------------------------------
+// 🆕 AFFRÈTEMENT : annulation (par l'équipe qui a fait la proposition)
+// -----------------------------------------------------------------------
+// Seule l'affréteuse (celle qui a déclaré la proposition) peut l'annuler,
+// et uniquement tant qu'elle est "en_attente". Une fois acceptée ou
+// refusée, la décision est prise : on ne revient pas dessus.
+if (isset($_POST['annuler_affretement'])) {
+    $id_affretement = intval($_POST['id_affretement'] ?? 0);
+
+    // 🔒 IDOR : la condition id_equipe_affreteur = équipe connectée garantit
+    // qu'on n'annule pas la proposition d'une autre équipe. Le statut est
+    // re-testé dans l'UPDATE lui-même (et pas seulement dans un SELECT
+    // préalable) pour éviter qu'une acceptation simultanée soit écrasée.
+    $stmt = $pdo->prepare(
+        "UPDATE zl_affretements SET statut = 'annulee', date_reponse = NOW()
+         WHERE id_affretement = :id_affretement AND id_equipe_affreteur = :id_equipe_affreteur AND statut = 'en_attente'"
+    );
+    $stmt->execute([
+        ':id_affretement'      => $id_affretement,
+        ':id_equipe_affreteur' => $id_equipe
+    ]);
+
+    if ($stmt->rowCount() === 0) {
+        header("Location: index.php?section=affretement&status=danger&msg=" . urlencode("Annulation impossible : la proposition n'existe pas, ne vous appartient pas, ou a déjà reçu une réponse."));
+        exit;
+    }
+
+    header("Location: index.php?section=affretement&status=success&msg=" . urlencode("Proposition d'affrètement annulée."));
+    exit;
+}
+
+// --- AJOUT / MODIF ---
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $id_ot = intval($_POST['id_ot'] ?? 0);
+    $date_act = $_POST['date_activite'] ?? '';
+    $type_act = $_POST['type_activite'] ?? '';
+
+    // 🆕 PLANNING PAR JOUR : conservé pour renvoyer l'équipe sur le même
+    // jour après l'action (succès ou erreur), plutôt que de la faire
+    // retomber sur l'écran "choisissez une date".
+    $date_jour_redirection = '&date_jour=' . urlencode($_POST['date_jour'] ?? $date_act);
+
+    // 🔒 CORRECTION SÉCURITÉ n°8 : validation du type d'activité
+    // On refuse toute valeur qui ne fait pas partie de la liste connue
+    // (TYPES_ACTIVITE_VALIDES, définie dans functions.php), plutôt que de
+    // faire confiance à ce que le formulaire HTML "devrait" envoyer. Un
+    // attaquant peut très bien poster n'importe quelle chaîne.
+    if (!in_array($type_act, TYPES_ACTIVITE_VALIDES, true)) {
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=error&msg=" . urlencode("Type d'activité invalide."));
+        exit;
+    }
+
+    // 🆕 Le  n'est plus saisi : il est calculé automatiquement
+    // à partir de la prise de service du lendemain (voir recalculerFeuille()).
+    if ($type_act === ACTIVITE_REPOS_JOURNALIER) {
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Le  est calculé automatiquement : il ne peut pas être saisi."));
+        exit;
+    }
+
+    $km = ($type_act === ACTIVITE_CONDUITE) ? intval($_POST['km_parcouru'] ?? 0) : 0;
+    $horaire = convertisseurTimeToDecimal($_POST['horaire_debut'] ?? '');
+
+    $duree_repos = null; // colonne réservée aux repos calculés automatiquement
+
+    if (isset($_POST['ajouter_activite'])) {
+        if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $date_act)) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=error&msg=" . urlencode("Date d'activité invalide."));
+            exit;
+        }
+
+        $stmtVerif = $pdo->prepare("SELECT id_feuille FROM zl_feuilles_otea WHERE id_feuille = :id_feuille AND id_vehicule = :id_vehicule AND id_equipe = :id_equipe LIMIT 1");
+        $stmtVerif->execute([
+            ':id_feuille'  => $id_feuille ?? 0,
+            ':id_vehicule' => $id_vehicule,
+            ':id_equipe'   => $id_equipe
+        ]);
+        $feuille_valide = $stmtVerif->fetch();
+
+        if (!$feuille_valide) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=error&msg=" . urlencode("Erreur : La feuille spécifiée est invalide pour ce véhicule."));
+            exit;
+        }
+
+        // 🔒 CORRECTION SÉCURITÉ n°9 : l'OT déclaré doit appartenir à
+        // l'équipe connectée (même logique IDOR que pour les lignes).
+        if (!otAppartientEquipe($pdo, $id_ot, $id_equipe)) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Cet ordre de transport ne vous est pas affecté."));
+            exit;
+        }
+
+        if ($type_act === ACTIVITE_PRISE_DE_SERVICE) {
+            $stmtCheck = $pdo->prepare('SELECT COUNT(*) FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND date_activite = :date_activite AND type_activite = :type_activite');
+            $stmtCheck->execute([
+                ':id_feuille'    => $id_feuille,
+                ':date_activite' => $date_act,
+                ':type_activite' => ACTIVITE_PRISE_DE_SERVICE
+            ]);
+
+            if ($stmtCheck->fetchColumn() > 0) {
+                header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Impossible : une prise de service existe déjà pour la date du " . date("d/m/Y", strtotime($date_act)) . "."));
+                exit;
+            }
+        }
+
+        if ($type_act !== ACTIVITE_PRISE_DE_SERVICE) {
+            $stmtVerifPrise = $pdo->prepare('SELECT COUNT(*) FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND date_activite = :date_act AND type_activite = :type');
+            $stmtVerifPrise->execute([':id_feuille' => $id_feuille, ':date_act' => $date_act, ':type' => ACTIVITE_PRISE_DE_SERVICE]);
+
+            if ($stmtVerifPrise->fetchColumn() == 0) {
+                header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Impossible d'ajouter cette activité : vous devez d'abord enregistrer une 'Prise de service' pour le " . date("d/m/Y", strtotime($date_act)) . "."));
+                exit;
+            }
+        }
+
+        $stmtCheckFin = $pdo->prepare('SELECT COUNT(*) FROM zl_lignes_activite WHERE id_feuille = :id_feuille AND date_activite = :date_act AND type_activite = :type');
+        $stmtCheckFin->execute([':id_feuille' => $id_feuille, ':date_act' => $date_act, ':type' => ACTIVITE_FIN_DE_SERVICE]);
+
+        if ($stmtCheckFin->fetchColumn() > 0) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Impossible d'ajouter une activité : la journée est terminée."));
+            exit;
+        }
+
+        $stmtOrdre = $pdo->prepare('SELECT IFNULL(MAX(ordre_chronologique), 0) + 1 FROM zl_lignes_activite WHERE id_feuille = :id_feuille');
+        $stmtOrdre->execute([':id_feuille' => $id_feuille]);
+        $ordre = $stmtOrdre->fetchColumn();
+
+        // 🆕 Écriture + recalcul dans une transaction : refusée (et annulée)
+        // si elle ferait passer un  sous le minimum.
+        $erreur_repos = executerAvecControleRepos($pdo, (int) $id_feuille, $date_act, function () use ($pdo, $id_feuille, $id_ot, $ordre, $date_act, $horaire, $type_act, $km, $duree_repos) {
+            $stmt = $pdo->prepare('INSERT INTO zl_lignes_activite
+                (id_feuille, id_ot, ordre_chronologique, date_activite, horaire_debut, type_activite, km_parcouru, duree_repos_h, est_debut_journee,
+                conduite_continue_cumul, total_conduite_cumul, total_service_cumul)
+                VALUES (:id_feuille, :id_ot, :ordre_chronologique, :date_activite, :horaire_debut, :type_activite, :km_parcouru, :duree_repos_h, :est_debut_journee, 0, 0, 0)');
+
+            $stmt->execute([
+                ':id_feuille'          => $id_feuille,
+                ':id_ot'               => $id_ot,
+                ':ordre_chronologique' => $ordre,
+                ':date_activite'       => $date_act,
+                ':horaire_debut'       => $horaire,
+                ':type_activite'       => $type_act,
+                ':km_parcouru'         => $km,
+                ':duree_repos_h'       => $duree_repos,
+                ':est_debut_journee'   => ($type_act === ACTIVITE_PRISE_DE_SERVICE ? 1 : 0)
+            ]);
+        });
+
+        if ($erreur_repos) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode($erreur_repos));
+            exit;
+        }
+
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=success&msg=" . urlencode("Nouvel évènement enregistré avec succès"));
+        exit;
+    }
+    elseif (isset($_POST['modifier_activite'])) {
+        $id_ligne = intval($_POST['id_ligne'] ?? 0);
+
+        // 🔒 CORRECTION SÉCURITÉ n°6 bis : même contrôle de propriété que
+        // pour la suppression, appliqué ici à la modification.
+        $id_feuille_verifiee = ligneAppartientEquipe($pdo, $id_ligne, $id_equipe);
+        if (!$id_feuille_verifiee) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Action refusée : cette ligne n'existe pas ou ne vous appartient pas."));
+            exit;
+        }
+
+        if (!otAppartientEquipe($pdo, $id_ot, $id_equipe)) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Cet ordre de transport ne vous est pas affecté."));
+            exit;
+        }
+
+        // 🆕 Ligne d'origine : le  (calculé) ne se modifie pas, et
+        // la date d'une ligne ne change jamais (le formulaire la verrouille) :
+        // on conserve celle de la base plutôt que celle envoyée par le formulaire.
+        $stmtOrig = $pdo->prepare('SELECT type_activite, date_activite FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
+        $stmtOrig->execute([':id_ligne' => $id_ligne]);
+        $ligne_origine = $stmtOrig->fetch();
+
+        if ($ligne_origine['type_activite'] === ACTIVITE_REPOS_JOURNALIER) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule ?? 0) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Le  est calculé automatiquement : il ne peut pas être modifié."));
+            exit;
+        }
+        $date_act = $ligne_origine['date_activite'];
+
+        $erreur_repos = executerAvecControleRepos($pdo, (int) $id_feuille_verifiee, $date_act, function () use ($pdo, $id_ot, $date_act, $horaire, $type_act, $km, $duree_repos, $id_ligne) {
+            $stmt = $pdo->prepare('UPDATE zl_lignes_activite SET id_ot = :id_ot, date_activite = :date_activite, horaire_debut = :horaire_debut, type_activite = :type_activite, km_parcouru = :km_parcouru, duree_repos_h = :duree_repos_h WHERE id_ligne = :id_ligne');
+            $stmt->execute([
+                ':id_ot'         => $id_ot,
+                ':date_activite' => $date_act,
+                ':horaire_debut' => $horaire,
+                ':type_activite' => $type_act,
+                ':km_parcouru'   => $km,
+                ':duree_repos_h' => $duree_repos,
+                ':id_ligne'      => $id_ligne
+            ]);
+        });
+
+        $id_vehicule_redirection = isset($_POST['id_vehicule']) ? intval($_POST['id_vehicule']) : 0;
+        if ($erreur_repos) {
+            header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=danger&msg=" . urlencode("Modification impossible. " . $erreur_repos));
+            exit;
+        }
+        header("Location: index.php?id_vehicule=" . urlencode($id_vehicule_redirection) . $date_jour_redirection . "&status=success&msg=" . urlencode("Modification enregistrée avec succès"));
+        exit;
+    }
+}

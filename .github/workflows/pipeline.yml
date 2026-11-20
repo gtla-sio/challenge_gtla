@@ -1,0 +1,42 @@
+# =====================================================================
+# Pipeline CI/CD du projet Challenge GTLA
+#   verifier : à chaque pull request et à chaque push sur main,
+#              syntaxe PHP et tests unitaires, avec PHP 8.2 (postes)
+#              et PHP 8.4 (InfinityFree)
+# =====================================================================
+name: Pipeline
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:          # bouton « Run workflow » pour relancer à la main
+
+jobs:
+  verifier:
+    name: verifier-php-${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ['8.2', '8.4']
+    steps:
+      - name: Récupérer le code
+        uses: actions/checkout@v4
+
+      - name: Installer PHP ${{ matrix.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: composer
+          coverage: none
+
+      - name: Vérifier la syntaxe de tous les fichiers PHP
+        run: find . -name "*.php" -not -path "./vendor/*" -print0 | xargs -0 -n1 php -l
+
+      - name: Installer les dépendances (Composer)
+        if: hashFiles('composer.json') != ''
+        run: composer install --no-interaction --no-progress
+
+      - name: Lancer les tests unitaires
+        if: hashFiles('phpunit.xml') != ''
+        run: php vendor/bin/phpunit

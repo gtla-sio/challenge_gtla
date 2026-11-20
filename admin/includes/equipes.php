@@ -12,8 +12,8 @@ $lycees = $pdo->query("SELECT * FROM lycees ORDER BY nom_lycee ASC")->fetchAll()
 
 $edit_eq = null;
 if (isset($_GET['edit'])) {
-    $stmt = $pdo->prepare("SELECT * FROM equipes WHERE id_equipe = :id_equipe");
-    $stmt->execute([':id_equipe' => intval($_GET['edit'])]);
+    $stmt = $pdo->prepare("SELECT * FROM equipes WHERE id_equipe = ?");
+    $stmt->execute([intval($_GET['edit'])]);
     $edit_eq = $stmt->fetch();
 }
 ?>
