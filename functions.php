@@ -145,16 +145,16 @@ function ligneAppartientEquipe(PDO $pdo, int $id_ligne, int $id_equipe): ?int {
         'SELECT l.id_feuille
          FROM zl_lignes_activite l
          JOIN zl_feuilles_otea f ON l.id_feuille = f.id_feuille
-         WHERE l.id_ligne = ? AND f.id_equipe = ?'
-    );
-    $stmt->execute([$id_ligne, $id_equipe]);
          WHERE l.id_ligne = :id_ligne AND f.id_equipe = :id_equipe'
     );
+
     $stmt->execute([
         ':id_ligne'  => $id_ligne,
         ':id_equipe' => $id_equipe
     ]);
+
     $id_feuille = $stmt->fetchColumn();
+
     return $id_feuille !== false ? (int)$id_feuille : null;
 }
 
@@ -178,34 +178,35 @@ function otAppartientEquipe(PDO $pdo, int $id_ot, int $id_equipe): bool {
     $stmt = $pdo->prepare(
         "SELECT 1
          FROM zl_ordres_transport ot
-         WHERE ot.id_ot = ?
-           AND (
-                (ot.id_equipe = ? AND NOT EXISTS (
          WHERE ot.id_ot = :id_ot
            AND (
-                (ot.id_equipe = :id_equipe_1 AND NOT EXISTS (
-                    SELECT 1 FROM zl_affretements a
-                    WHERE a.id_ot = ot.id_ot AND a.statut = 'acceptee'
-                ))
+                (
+                    ot.id_equipe = :id_equipe_1
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM zl_affretements a
+                        WHERE a.id_ot = ot.id_ot
+                          AND a.statut = 'acceptee'
+                    )
+                )
                 OR EXISTS (
-                    SELECT 1 FROM zl_affretements a
-                    WHERE a.id_ot = ot.id_ot AND a.id_equipe_affrete = ? AND a.statut = 'acceptee'
+                    SELECT 1
+                    FROM zl_affretements a
+                    WHERE a.id_ot = ot.id_ot
+                      AND a.id_equipe_affrete = :id_equipe_2
+                      AND a.statut = 'acceptee'
                 )
            )"
     );
-    $stmt->execute([$id_ot, $id_equipe, $id_equipe]);
-                    WHERE a.id_ot = ot.id_ot AND a.id_equipe_affrete = :id_equipe_2 AND a.statut = 'acceptee'
-                )
-           )"
-    );
+
     $stmt->execute([
         ':id_ot'       => $id_ot,
         ':id_equipe_1' => $id_equipe,
         ':id_equipe_2' => $id_equipe
     ]);
+
     return (bool) $stmt->fetchColumn();
 }
-
 // -----------------------------------------------------------------------
 // 5. AFFRÈTEMENT ET RENTABILITÉ
 // -----------------------------------------------------------------------
@@ -219,15 +220,17 @@ function otAppartientEquipe(PDO $pdo, int $id_ot, int $id_equipe): bool {
  */
 function kmParcourusPourOt(PDO $pdo, int $id_ot): float {
     $stmt = $pdo->prepare(
-        'SELECT COALESCE(SUM(km_parcouru), 0) FROM zl_lignes_activite WHERE id_ot = ? AND type_activite = ?'
+        'SELECT COALESCE(SUM(km_parcouru), 0)
+         FROM zl_lignes_activite
+         WHERE id_ot = :id_ot
+           AND type_activite = :type_activite'
     );
-    $stmt->execute([$id_ot, ACTIVITE_CONDUITE]);
-        'SELECT COALESCE(SUM(km_parcouru), 0) FROM zl_lignes_activite WHERE id_ot = :id_ot AND type_activite = :type_activite'
-    );
+
     $stmt->execute([
         ':id_ot'         => $id_ot,
         ':type_activite' => ACTIVITE_CONDUITE
     ]);
+
     return (float) $stmt->fetchColumn();
 }
 
@@ -245,15 +248,15 @@ function coutRevientPourOt(PDO $pdo, int $id_ot): float {
          JOIN zl_feuilles_otea f ON l.id_feuille = f.id_feuille
          JOIN zl_vehicules v ON f.id_vehicule = v.id_vehicule
          JOIN ref_energies re ON v.id_energie = re.id_energie
-         WHERE l.id_ot = ? AND l.type_activite = ?"
+         WHERE l.id_ot = :id_ot
+           AND l.type_activite = :type_activite"
     );
-    $stmt->execute([$id_ot, ACTIVITE_CONDUITE]);
-         WHERE l.id_ot = :id_ot AND l.type_activite = :type_activite"
-    );
+
     $stmt->execute([
         ':id_ot'         => $id_ot,
         ':type_activite' => ACTIVITE_CONDUITE
     ]);
+
     return (float) $stmt->fetchColumn();
 }
 
@@ -327,20 +330,23 @@ function sqlOtLivre(string $alias_ot): string {
  */
 function calculerScoreAffretement(PDO $pdo, int $id_equipe): array {
     $stmt = $pdo->prepare(
-        "SELECT COALESCE(SUM(ot.ca), 0) AS total_ca, COALESCE(SUM(ot.ca - a.prix_affretement), 0) AS total_marge, COUNT(*) AS nb_ot
+        "SELECT
+            COALESCE(SUM(ot.ca), 0) AS total_ca,
+            COALESCE(SUM(ot.ca - a.prix_affretement), 0) AS total_marge,
+            COUNT(*) AS nb_ot
          FROM zl_affretements a
          JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
-         WHERE a.id_equipe_affreteur = ? AND a.statut = 'acceptee'
+         WHERE a.id_equipe_affreteur = :id_equipe
+           AND a.statut = 'acceptee'
            AND " . sqlOtLivre('ot')
     );
-    $stmt->execute([$id_equipe]);
-         WHERE a.id_equipe_affreteur = :id_equipe AND a.statut = 'acceptee'
-           AND " . sqlOtLivre('ot')
-    );
+
     $stmt->execute([':id_equipe' => $id_equipe]);
     $r = $stmt->fetch();
 
-    $taux = ($r['nb_ot'] > 0 && $r['total_ca'] > 0) ? round(($r['total_marge'] / $r['total_ca']) * 100, 2) : null;
+    $taux = ($r['nb_ot'] > 0 && $r['total_ca'] > 0)
+        ? round(($r['total_marge'] / $r['total_ca']) * 100, 2)
+        : null;
 
     return [
         'nb_ot'  => (int) $r['nb_ot'],
@@ -359,19 +365,20 @@ function calculerScoreAffretement(PDO $pdo, int $id_equipe): array {
  * Taux = marge globale / CA (ou prix reçu) global.
  */
 function calculerScoreExploitation(PDO $pdo, int $id_equipe): array {
-    // (a) Ses propres OT clients, exploités en propre (pas sous-traités)
+    // (a) Ses propres OT clients, exploités en propre
     $stmt = $pdo->prepare(
         "SELECT ot.id_ot, ot.ca
          FROM zl_ordres_transport ot
-         WHERE ot.id_equipe = ?
-           AND NOT EXISTS (SELECT 1 FROM zl_affretements a WHERE a.id_ot = ot.id_ot AND a.statut = 'acceptee')
-           AND " . sqlOtLivre('ot')
-    );
-    $stmt->execute([$id_equipe]);
          WHERE ot.id_equipe = :id_equipe
-           AND NOT EXISTS (SELECT 1 FROM zl_affretements a WHERE a.id_ot = ot.id_ot AND a.statut = 'acceptee')
+           AND NOT EXISTS (
+               SELECT 1
+               FROM zl_affretements a
+               WHERE a.id_ot = ot.id_ot
+                 AND a.statut = 'acceptee'
+           )
            AND " . sqlOtLivre('ot')
     );
+
     $stmt->execute([':id_equipe' => $id_equipe]);
     $ots_propres = $stmt->fetchAll();
 
@@ -380,13 +387,11 @@ function calculerScoreExploitation(PDO $pdo, int $id_equipe): array {
         "SELECT ot.id_ot, a.prix_affretement AS ca
          FROM zl_affretements a
          JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
-         WHERE a.id_equipe_affrete = ? AND a.statut = 'acceptee'
+         WHERE a.id_equipe_affrete = :id_equipe
+           AND a.statut = 'acceptee'
            AND " . sqlOtLivre('ot')
     );
-    $stmt->execute([$id_equipe]);
-         WHERE a.id_equipe_affrete = :id_equipe AND a.statut = 'acceptee'
-           AND " . sqlOtLivre('ot')
-    );
+
     $stmt->execute([':id_equipe' => $id_equipe]);
     $ots_affretes = $stmt->fetchAll();
 
@@ -395,15 +400,16 @@ function calculerScoreExploitation(PDO $pdo, int $id_equipe): array {
     $nb_ot = 0;
 
     foreach (array_merge($ots_propres, $ots_affretes) as $ot) {
-        // 🆕 Coût de revient réel (dépend du véhicule/énergie utilisé),
-        // au lieu d'un coût au km unique pour tout le monde.
         $cout = coutRevientPourOt($pdo, (int) $ot['id_ot']);
+
         $total_ca += (float) $ot['ca'];
         $total_marge += (float) $ot['ca'] - $cout;
         $nb_ot++;
     }
 
-    $taux = ($nb_ot > 0 && $total_ca > 0) ? round(($total_marge / $total_ca) * 100, 2) : null;
+    $taux = ($nb_ot > 0 && $total_ca > 0)
+        ? round(($total_marge / $total_ca) * 100, 2)
+        : null;
 
     return [
         'nb_ot'  => $nb_ot,
@@ -428,24 +434,31 @@ function calculerScoreExploitation(PDO $pdo, int $id_equipe): array {
  */
 function calculerCoefficientTraitement(PDO $pdo, int $id_equipe): array {
     $livre = sqlOtLivre('ot');
+
     $stmt = $pdo->prepare(
-        "SELECT COUNT(*) AS nb_a_traiter, COALESCE(SUM(t.livre), 0) AS nb_traites
+        "SELECT
+            COUNT(*) AS nb_a_traiter,
+            COALESCE(SUM(t.livre), 0) AS nb_traites
          FROM (
              SELECT ot.id_ot, $livre AS livre
              FROM zl_ordres_transport ot
-             WHERE ot.id_equipe = ?
              WHERE ot.id_equipe = :id_equipe_1
+
              UNION ALL
+
              SELECT ot.id_ot, $livre AS livre
              FROM zl_affretements a
              JOIN zl_ordres_transport ot ON a.id_ot = ot.id_ot
-             WHERE a.id_equipe_affrete = :id_equipe_2 AND a.statut = 'acceptee'
+             WHERE a.id_equipe_affrete = :id_equipe_2
+               AND a.statut = 'acceptee'
          ) t"
     );
+
     $stmt->execute([
         ':id_equipe_1' => $id_equipe,
         ':id_equipe_2' => $id_equipe
     ]);
+
     $r = $stmt->fetch();
 
     $nb_a_traiter = (int) $r['nb_a_traiter'];
@@ -454,7 +467,9 @@ function calculerCoefficientTraitement(PDO $pdo, int $id_equipe): array {
     return [
         'nb_a_traiter' => $nb_a_traiter,
         'nb_traites'   => $nb_traites,
-        'coefficient'  => $nb_a_traiter > 0 ? $nb_traites / $nb_a_traiter : 1.0,
+        'coefficient'  => $nb_a_traiter > 0
+            ? $nb_traites / $nb_a_traiter
+            : 1.0,
     ];
 }
 
