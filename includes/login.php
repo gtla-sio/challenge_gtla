@@ -25,6 +25,7 @@
                                 <input type="password" name="mot_de_passe" class="form-control" placeholder="••••••••" required>
                             </div>
                             <button type="submit" name="login_team_submit" class="btn btn-primary w-100">Se connecter</button>
+                            <p class="text-muted small text-center mt-3 mb-0">Challenge GTLA · version de stage SIO 2026</p>
                         </form>
                     </div>
                 </div>
