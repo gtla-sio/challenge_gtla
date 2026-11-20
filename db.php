@@ -16,10 +16,10 @@
 // db.php - Connexion centralisée à la base de données
 require_once __DIR__ . '/env.php';   // remplit les variables GTLA_DB_... depuis .env, s'il existe
 // ... (le reste du fichier est inchangé)
-$host    = getenv('GTLA_DB_HOST') ?: 'localhost';
-$db      = getenv('GTLA_DB_NAME') ?: 'challenge_gtla';
-$user    = getenv('GTLA_DB_USER') ?: 'root';   // À adapter selon environnement de production
-$pass    = getenv('GTLA_DB_PASS') ?: '';       // À adapter selon environnement de production
+$host = $_ENV['GTLA_DB_HOST'] ?? $_SERVER['GTLA_DB_HOST'] ?? (getenv('GTLA_DB_HOST') ?: 'localhost');
+$db   = $_ENV['GTLA_DB_NAME'] ?? $_SERVER['GTLA_DB_NAME'] ?? (getenv('GTLA_DB_NAME') ?: 'challenge_gtla');
+$user = $_ENV['GTLA_DB_USER'] ?? $_SERVER['GTLA_DB_USER'] ?? (getenv('GTLA_DB_USER') ?: 'root');
+$pass = $_ENV['GTLA_DB_PASS'] ?? $_SERVER['GTLA_DB_PASS'] ?? (getenv('GTLA_DB_PASS') ?: '');
 $charset = 'utf8mb4';
 
 $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
