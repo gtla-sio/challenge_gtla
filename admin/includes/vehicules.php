@@ -16,6 +16,8 @@ $edit_v = null;
 if (isset($_GET['edit'])) {
     $stmt = $pdo->prepare("SELECT * FROM zl_vehicules WHERE id_vehicule = ?");
     $stmt->execute([intval($_GET['edit'])]);
+    $stmt = $pdo->prepare("SELECT * FROM zl_vehicules WHERE id_vehicule = :id_vehicule");
+    $stmt->execute([':id_vehicule' => intval($_GET['edit'])]);
     $edit_v = $stmt->fetch();
 }
 ?>

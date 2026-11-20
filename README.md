@@ -27,7 +27,6 @@ Le déroulé d'un challenge :
 1. L'administration crée les équipes et leur attribue des **ordres de transport (OT)**, saisis à la main ou importés depuis un fichier Excel (modèle `import/modele_import_ot.xlsx`).
 2. Chaque équipe décide, pour chacun de ses OT, de l'**exécuter** avec ses propres véhicules ou de le **sous-traiter** (affrètement) à une autre équipe.
 3. Pour chaque véhicule et chaque jour du challenge, l'équipe saisit son **planning** : prise de service, chargement, conduite, déchargement, pause, fin de service.
-4. L'application calcule les durées, les cumuls de conduite et de service, les repos journaliers, les marges et le **classement**.
 
 ## 2. Installation en local
 
@@ -115,8 +114,6 @@ Statuts : `en_attente`, `acceptee`, `refusee`, `annulee`.
 - Durées : la conduite dure km ÷ vitesse moyenne ; chargement, déchargement et pause ont une durée fixe réglée dans les paramètres.
 - **Fin de journée** : une activité qui dure (conduite, chargement, déchargement, pause) doit être terminée au plus tard à minuit (fin à 24:00 acceptée). Une saisie ou une modification qui ferait déborder une activité est refusée. Les suppressions ne sont pas contrôlées, pour pouvoir corriger une journée déjà en dépassement.
 
-### 3.5 Repos journalier (calculé automatiquement)
-
 - Repos du jour D = 24 h + heure de prise de service du jour D+1 − heure de fin du jour D.
 - Il est ajouté automatiquement en dernière ligne du jour D. Il n'est **ni saisissable, ni modifiable, ni supprimable**, et il est recalculé à chaque écriture dans le planning.
 - Minimum : paramètre `repos_journalier_min_h` (9 h par défaut). Une saisie qui ferait passer un repos sous le minimum est refusée, avec un message qui donne l'heure de prise de service minimale du lendemain.
@@ -170,7 +167,6 @@ challenge_gtla/
 ├── admin/               administration (index.php, actions.php, includes/)
 ├── import/              modèle et exemple de fichier Excel d'import des OT
 └── bdd/challenge_gtla.sql   base complète avec données de démonstration
-```
 
 ## 6. Pistes d'évolution
 

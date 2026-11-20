@@ -1,7 +1,7 @@
-# Fichiers de configuration locale contenant des identifiants
-# (à créer si vous passez à un vrai fichier de config séparé)
-config.local.php
+vendor/
 .env
-
-# Fichiers d'environnement de dev
 .vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

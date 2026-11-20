@@ -6,6 +6,9 @@ $edit_user = null;
 if (isset($_GET['edit'])) {
     $stmt = $pdo->prepare("SELECT * FROM utilisateurs WHERE id_utilisateur = ?");
     $stmt->execute([intval($_GET['edit'])]);
+    $stmt = $pdo->prepare("SELECT * FROM utilisateurs WHERE id_utilisateur = :id_utilisateur");
+    $stmt->execute([':id_utilisateur' => intval($_GET['edit'])]);$stmt = $pdo->prepare("SELECT * FROM utilisateurs WHERE id_utilisateur = :id_utilisateur");
+    $stmt->execute([':id_utilisateur' => intval($_GET['edit'])]);
     $edit_user = $stmt->fetch();
 }
 ?>
