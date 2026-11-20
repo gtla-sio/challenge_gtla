@@ -1,6 +1,7 @@
-<?
+<?php
 // TEST UNITAIRE DE TauxVersPoint()
 use PHPUnit\Framework\TestCase;
+require_once __DIR__ . '/../functions.php';
 
 class TauxVersPointsTest extends TestCase
 {
