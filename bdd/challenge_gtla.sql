@@ -882,6 +882,7 @@ CREATE TABLE `zl_ordres_transport` (
   `id_type_support` int(11) NOT NULL,
   `pbt` decimal(10,2) NOT NULL,
   `ca` decimal(10,2) NOT NULL,
+  `date_livraison_prevue` datetime DEFAULT NULL,
   `id_equipe` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
