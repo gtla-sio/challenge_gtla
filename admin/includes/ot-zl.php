@@ -147,6 +147,37 @@ if (isset($_GET['edit'])) {
                         </select>
                     </div>
 
+                    <!-- Kilométrage de référence -->
+                    <div class="mb-2">
+                        <label class="small fw-bold text-secondary">Kilométrage de référence</label>
+                        <input
+                            type="number"
+                            name="km_reference"
+                            min="0"
+                            step="1"
+                            class="form-control form-control-sm"
+                            value="<?= htmlspecialchars($edit_ot['km_reference'] ?? '') ?>"
+                            placeholder="Ex : 120"
+                        >
+                    </div>
+
+                    <!-- Jour de traitement -->
+                    <div class="mb-3">
+                        <label class="small fw-bold text-secondary">Jour de traitement</label>
+                        <select name="jour_traitement" class="form-select form-select-sm">
+                            <option value="">-- Aucun jour --</option>
+                            <?php
+                            $jours_valides = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi'];
+                            foreach ($jours_valides as $jour):
+                            ?>
+                                <option value="<?= $jour ?>"
+                                    <?= (($edit_ot['jour_traitement'] ?? '') === $jour) ? 'selected' : '' ?>>
+                                    <?= ucfirst($jour) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
                     <button type="submit" class="btn btn-indigo btn-sm w-100 fw-bold">Enregistrer l'OT</button>
                     <?php if($edit_ot): ?><a href="?section=ot-zl" class="btn btn-light btn-sm w-100 mt-1">Annuler</a><?php endif; ?>
                 </form>
@@ -173,13 +204,15 @@ if (isset($_GET['edit'])) {
                             <!-- nowrap : le montant (jusqu'à 9 999,99 €) ne doit jamais passer à la ligne -->
                             <th class="text-nowrap">CA (€)</th>
                             <th class="text-nowrap">Équipe</th>
+                            <th class="text-nowrap">Km référence</th>
+                            <th class="text-nowrap">Jour traitement</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($ots)): ?>
                             <tr>
-                                <td colspan="9" class="text-muted py-3">Aucun ordre de transport enregistré.</td>
+                                <td colspan="11" class="text-muted py-3">Aucun ordre de transport enregistré.</td>
                             </tr>
                         <?php else: ?>
                             <?php foreach($ots as $o): ?>
@@ -211,6 +244,12 @@ if (isset($_GET['edit'])) {
                                 <td><?= htmlspecialchars($o['pbt']) ?></td>
                                 <td class="table-light fw-bold text-end text-nowrap"><?= number_format($o['ca'], 2, ',', ' ') ?></td>
                                 <td class="text-nowrap"><?= htmlspecialchars($o['nom_equipe'] ?? '-') ?></td>
+                                <td class="text-nowrap">
+                                    <?= $o['km_reference'] !== null ? htmlspecialchars((string)$o['km_reference']) . ' km' : '-' ?>
+                                </td>
+                                <td class="text-nowrap">
+                                    <?= !empty($o['jour_traitement']) ? htmlspecialchars(ucfirst($o['jour_traitement'])) : '-' ?>
+                                </td>
                                 <td>
                                     <a href="?section=ot-zl&p=<?= $page ?>&edit=<?= $o['id_ot'] ?>" class="text-primary me-1"><i class="bi bi-pencil-fill"></i></a>
                                     <!-- 🔒 CORRECTION : suppression en POST + CSRF (voir admin/actions.php) -->
