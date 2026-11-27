@@ -16,7 +16,7 @@ $repos_min = $config ? floatval($config['repos_journalier_min_h']) : 9.0;
 // -----------------------------------------------------------------------
 // Si la date de fin n'est pas renseignée par l'admin (champ optionnel
 // dans Paramètres ZL), plage de 14 jours par défaut (voir getJoursChallenge()
-// dans functions.php, partagée avec le calcul des s).
+// dans functions.php, partagée avec le calcul des repos journaliers).
 $noms_jours_fr = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 $jours_challenge = getJoursChallenge($pdo);
 
@@ -65,13 +65,14 @@ if ($id_vehicule) {
 // (même logique que otAppartientEquipe() dans functions.php, en version
 // "liste" plutôt que "test d'un seul id_ot")
 $stmtOts = $pdo->prepare(
-    "SELECT id_ot, numero_ot, expediteur, destinataire FROM zl_ordres_transport ot
+    "SELECT id_ot, numero_ot, expediteur, destinataire, jour_traitement FROM zl_ordres_transport ot
      WHERE ot.id_equipe = :id_equipe
        AND NOT EXISTS (
            SELECT 1 FROM zl_affretements a WHERE a.id_ot = ot.id_ot AND a.statut = 'acceptee'
        )
      UNION
-     SELECT ot.id_ot, ot.numero_ot, ot.expediteur, ot.destinataire FROM zl_ordres_transport ot
+     SELECT ot.id_ot, ot.numero_ot, ot.expediteur, ot.destinataire, ot.jour_traitement
+     FROM zl_ordres_transport ot
      JOIN zl_affretements a ON a.id_ot = ot.id_ot
      WHERE a.id_equipe_affrete = :id_equipe_affrete AND a.statut = 'acceptee'
      ORDER BY numero_ot"
@@ -164,18 +165,14 @@ if (!$date_jour) {
     return;
 }
 
-$stmtV = $pdo->prepare("SELECT libelle FROM zl_vehicules WHERE id_vehicule = :id_vehicule");
-$stmtV->execute([':id_vehicule' => $id_vehicule]);
+$stmtV = $pdo->prepare("SELECT libelle FROM zl_vehicules WHERE id_vehicule = ?");
+$stmtV->execute([$id_vehicule]);
 if ($v = $stmtV->fetch()) {
     $titre_tableau_de_bord = "Tableau de bord " . htmlspecialchars($v['libelle']) . " — " . formaterJourFr($date_jour, $noms_jours_fr);
 }
 
-$stmtF = $pdo->prepare('SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = :id_equipe AND id_vehicule = :id_vehicule AND date_debut_semaine = :date_debut_semaine');
-$stmtF->execute([
-    ':id_equipe' => $id_equipe,
-    ':id_vehicule' => $id_vehicule,
-    ':date_debut_semaine' => $date_debut_semaine
-]);
+$stmtF = $pdo->prepare('SELECT id_feuille FROM zl_feuilles_otea WHERE id_equipe = ? AND id_vehicule = ? AND date_debut_semaine = ?');
+$stmtF->execute([$id_equipe, $id_vehicule, $date_debut_semaine]);
 if ($f = $stmtF->fetch()) {
     $id_feuille = $f['id_feuille'];
 
@@ -195,26 +192,23 @@ if ($f = $stmtF->fetch()) {
                 WHEN l.type_activite = "Chargement" THEN p.temps_chargement_h
                 WHEN l.type_activite = "Déchargement" THEN p.temps_dechargement_h
                 WHEN l.type_activite = "Pause" THEN p.temps_pause_h
-                WHEN l.type_activite = "" THEN COALESCE(l.duree_repos_h, 0.00)
+                WHEN l.type_activite = "Repos journalier" THEN COALESCE(l.duree_repos_h, 0.00)
                 ELSE 0.00
             END AS duree_calculee
         FROM zl_lignes_activite l
         JOIN zl_ordres_transport ot ON l.id_ot = ot.id_ot
         JOIN zl_config_parametres p ON p.id_config = 1
-        WHERE l.id_feuille = :id_feuille AND l.date_activite = :date_activite
+        WHERE l.id_feuille = ? AND l.date_activite = ?
         ORDER BY l.ordre_chronologique ASC
     ');
-    $stmtL->execute([
-        ':id_feuille' => $id_feuille,
-        ':date_activite' => $date_jour
-    ]);
+    $stmtL->execute([$id_feuille, $date_jour]);
     $lignes = $stmtL->fetchAll();
 }
 
 // Calcul des données pour le formulaire (horaire proposé pour la
 // prochaine ligne DE CE JOUR)
 if (!empty($lignes)) {
-    // 🆕 Le  est calculé automatiquement et toujours en
+    // 🆕 Le repos journalier est calculé automatiquement et toujours en
     // dernière ligne du jour : l'horaire suivant se base sur la dernière
     // ligne qui n'est PAS un repos.
     $last = null;
@@ -239,8 +233,8 @@ $ligne_a_modifier = null;
 if (isset($_GET['action']) && $_GET['action'] === 'modifier' && isset($_GET['id_ligne'])) {
     $id_ligne_demandee = intval($_GET['id_ligne']);
     if (ligneAppartientEquipe($pdo, $id_ligne_demandee, $id_equipe)) {
-        $stmtMod = $pdo->prepare('SELECT * FROM zl_lignes_activite WHERE id_ligne = :id_ligne');
-        $stmtMod->execute([':id_ligne' => $id_ligne_demandee]);
+        $stmtMod = $pdo->prepare('SELECT * FROM zl_lignes_activite WHERE id_ligne = ?');
+        $stmtMod->execute([$id_ligne_demandee]);
         $ligne_a_modifier = $stmtMod->fetch();
 
         // 🆕 PLANNING PAR JOUR : le champ date n'est plus éditable dans le
@@ -251,7 +245,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'modifier' && isset($_GET['id_
         if ($ligne_a_modifier && $ligne_a_modifier['date_activite'] !== $date_jour) {
             $ligne_a_modifier = null;
         }
-        // 🆕 Le  (calculé automatiquement) ne se modifie pas.
+        // 🆕 Le repos journalier (calculé automatiquement) ne se modifie pas.
         if ($ligne_a_modifier && $ligne_a_modifier['type_activite'] === ACTIVITE_REPOS_JOURNALIER) {
             $ligne_a_modifier = null;
         }
@@ -312,7 +306,11 @@ $csrf_token = $_SESSION['csrf_token'] ?? '';
                                 <?php foreach ($liste_ots as $ot): ?>
                                     <?php $selected_ot = ($ligne_a_modifier && $ligne_a_modifier['id_ot'] == $ot['id_ot']) ? 'selected' : ''; ?>
                                     <option value="<?= $ot['id_ot'] ?>" <?= $selected_ot ?>>
-                                        OT n°<?= htmlspecialchars($ot['numero_ot']) ?> (<?= htmlspecialchars($ot['expediteur']) ?> -> <?= htmlspecialchars($ot['destinataire']) ?>)
+                                        OT n°<?= htmlspecialchars($ot['numero_ot']) ?>
+                                        <?php if (!empty($ot['jour_traitement'])): ?>
+                                            — <?= htmlspecialchars(ucfirst($ot['jour_traitement'])) ?>
+                                        <?php endif; ?>
+                                        (<?= htmlspecialchars($ot['expediteur']) ?> -> <?= htmlspecialchars($ot['destinataire']) ?>)
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -328,7 +326,7 @@ $csrf_token = $_SESSION['csrf_token'] ?? '';
                                 // dans actions.php.
                                 $selected_type = $ligne_a_modifier ? $ligne_a_modifier['type_activite'] : ACTIVITE_PRISE_DE_SERVICE;
                                 foreach (TYPES_ACTIVITE_VALIDES as $t) {
-                                    // 🆕 Le  n'est plus saisi : calculé automatiquement
+                                    // 🆕 Le repos journalier n'est plus saisi : calculé automatiquement
                                     if ($t === ACTIVITE_REPOS_JOURNALIER) continue;
                                     $sel = ($t === $selected_type) ? 'selected' : '';
                                     echo '<option value="' . htmlspecialchars($t) . '" ' . $sel . '>' . htmlspecialchars($t) . '</option>';
@@ -432,7 +430,7 @@ $csrf_token = $_SESSION['csrf_token'] ?? '';
                                     </td>
                                     <td>
                                         <?php if ($l['type_activite'] === ACTIVITE_REPOS_JOURNALIER): ?>
-                                            <!-- 🆕  calculé automatiquement : non modifiable, non supprimable -->
+                                            <!-- 🆕 Repos journalier calculé automatiquement : non modifiable, non supprimable -->
                                             <span class="badge bg-secondary" title="Calculé automatiquement à partir de la prise de service du lendemain"><i class="bi bi-lock-fill"></i> Auto</span>
                                         <?php else: ?>
                                         <div class="btn-group btn-group-sm">
